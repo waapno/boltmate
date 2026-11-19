@@ -19,7 +19,9 @@ export type ParkPt = {
   occupancy?: number;
   observedAt?: string;
   officialUrl?: string;
+  isAccessibleForFree?: boolean;
   subscribersOnly?: boolean;
+  tags?: { fee?: string };
 };
 
 const fc = (features: Feature[]): FeatureCollection => ({ type: "FeatureCollection", features });
@@ -33,16 +35,22 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
   const map = useRef<maplibregl.Map | null>(null);
   const ready = useRef(false);
   const cb = useRef({ onPark, onZone });
+  const data = useRef({ zones, parking, me, target });
+  const sync = useRef<() => void>(() => {});
   cb.current = { onPark, onZone };
+  data.current = { zones, parking, me, target };
 
-  const sync = () => {
-    const m = map.current; if (!m || !ready.current) return;
+  sync.current = () => {
+    const m = map.current;
+    if (!m || !ready.current) return;
+    const { zones, parking, me, target } = data.current;
     (m.getSource("zones") as maplibregl.GeoJSONSource).setData(fc(zones.map((z) => pt(z.c, { id: z.id, name: z.name, score: z.score }))));
     (m.getSource("park") as maplibregl.GeoJSONSource).setData(fc(parking.map((p) => pt(p.c, {
       id: p.id,
       name: p.name,
       score: p.score,
       source: p.source,
+      free: p.isAccessibleForFree ?? p.tags?.fee === "no",
       ...(p.occupancy === undefined ? {} : { occupancy: p.occupancy }),
     }))));
     (m.getSource("me") as maplibregl.GeoJSONSource).setData(fc(me ? [pt(me, {})] : []));
@@ -72,17 +80,17 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
           ["step", ["get", "occupancy"], "#3ddc97", 50, "#f2b33d", 85, "#ff5a3c"],
           ["step", ["get", "score"], "#ff5a3c", 45, "#f2b33d", 65, "#3ddc97"]],
         "circle-stroke-color": "#0b0f14", "circle-stroke-width": 1.5 } });
-      m.addLayer({ id: "park-p", type: "symbol", source: "park", minzoom: 14, layout: { "text-field": ["case", ["==", ["get", "source"], "osm"], "P", "M"], "text-size": 10, "text-font": ["Noto Sans Bold"], "text-allow-overlap": true }, paint: { "text-color": "#0b0f14" } });
+      m.addLayer({ id: "park-p", type: "symbol", source: "park", minzoom: 14, layout: { "text-field": ["case", ["get", "free"], "F", ["==", ["get", "source"], "osm"], "P", "M"], "text-size": 10, "text-font": ["Noto Sans Bold"], "text-allow-overlap": true }, paint: { "text-color": "#0b0f14" } });
       m.addLayer({ id: "me", type: "circle", source: "me", paint: { "circle-radius": 8, "circle-color": "#4fc3ff", "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
       m.on("click", "park", (e) => cb.current.onPark(String(e.features?.[0]?.properties?.["id"])));
       m.on("click", "zone-core", (e) => cb.current.onZone(String(e.features?.[0]?.properties?.["id"])));
       for (const l of ["park", "zone-core"]) { m.on("mouseenter", l, () => (m.getCanvas().style.cursor = "pointer")); m.on("mouseleave", l, () => (m.getCanvas().style.cursor = "")); }
-      ready.current = true; sync();
+      ready.current = true; sync.current();
     });
     return () => { m.remove(); map.current = null; ready.current = false; };
   }, []);
 
-  useEffect(sync, [zones, parking, me, target]);
+  useEffect(() => { sync.current(); }, [zones, parking, me, target]);
   useEffect(() => { if (focus && map.current) map.current.flyTo({ center: focus, zoom: 15.2, pitch: 40, duration: 1200 }); }, [focus]);
 
   return <div ref={el} className="absolute inset-0 h-full w-full" />;

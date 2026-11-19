@@ -1,6 +1,6 @@
 import { createFileRoute, ClientOnly } from "@tanstack/react-router";
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { DEFAULT_SETTINGS, costPerKm, evaluate, haversine, parkingByZone as groupParkingByZone, standOrMove, type ParkingTags, type Settings } from "@/lib/engine";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { DEFAULT_SETTINGS, costPerKm, estimateZonePerformance, evaluate, haversine, parkingByZone as groupParkingByZone, rankParkingForCourier, standOrMove, type ParkingTags, type Settings } from "@/lib/engine";
 import { ZONES, zoneScoreAt } from "@/lib/zones";
 import type { ParkPt } from "@/components/MapView";
 
@@ -23,7 +23,7 @@ export const Route = createFileRoute("/")({
 type Park = ParkPt & { tags: ParkingTags };
 type ParkingData = { elements: unknown[]; facilities: unknown[] };
 type ParkingSource = { status: "fresh" | "stale" | "unavailable"; fetchedAt: string | null };
-type LogItem = { net: number; km: number; mov: number; wait: number; t: number };
+type LogItem = { net: number; km: number; mov: number; wait: number; t: number; zoneId?: string };
 const PARKING_STORAGE_KEY = "kp-parking-cache-v2";
 const LEGACY_PARKING_STORAGE_KEY = "kp-osm-cache-v1";
 const TABS = ["Teď", "Nabídka", "Parkování", "Směna"] as const;
@@ -78,6 +78,9 @@ function Index() {
   const [now, setNow] = useState<Date | null>(null);
   const [me, setMe] = useState<[number, number] | null>(null);
   const [speed, setSpeed] = useState<number | null>(null);
+  const [gpsError, setGpsError] = useState<string | null>(null);
+  const [gpsActive, setGpsActive] = useState(false);
+  const gpsWatchId = useRef<number | null>(null);
   const [limit, setLimit] = useState(50);
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [parkingData, setParkingData] = useState<ParkingData>({ elements: [], facilities: [] });
@@ -160,16 +163,25 @@ function Index() {
     [parkingData],
   );
 
-  // Smart ranking: demand by hour minus cost of getting there from GPS position
+  // Use logged results when available; the cold-start fallback is only a demand estimate.
   const ranked = useMemo(() => ZONES.map((z) => {
     const demand = zoneScoreAt(z, hour);
     const km = me ? haversine(me, z.c) * 1.3 : 0; // 1.3 ≈ road detour factor
-    const value = demand * S.tgt - km * cpk * 2; // Kč/h-like index
-    return { ...z, demand, km, value };
-  }).sort((a, b) => b.value - a.value), [hour, me, S.tgt, cpk]);
+    const performance = estimateZonePerformance(log, z.id, demand * S.tgt);
+    const travelMin = km * 3; // approximate urban travel at 20 km/h
+    const remainingMin = Math.max(0, 30 - travelMin);
+    const value = me
+      ? performance.netPerHour * (remainingMin / 60) - km * cpk
+      : performance.netPerHour;
+    return { ...z, demand, km, travelMin, remainingMin, performance, value };
+  }).sort((a, b) =>
+    b.value - a.value ||
+    b.performance.ordersPerHour - a.performance.ordersPerHour ||
+    b.demand - a.demand
+  ), [hour, me, S.tgt, cpk, log]);
 
   const zone = ZONES.find((z) => z.id === zoneId) ?? null;
-  const parks = zoneId ? parkingByZone[zoneId] ?? [] : [];
+  const parks = zoneId ? rankParkingForCourier(parkingByZone[zoneId] ?? [], me) : [];
   const allParks = useMemo(
     () => [...new Map(Object.values(parkingByZone).flat().map((p) => [p.id, p])).values()],
     [parkingByZone],
@@ -187,20 +199,46 @@ function Index() {
 
   useEffect(() => {
     if (!auto || !zoneId || parkSel) return;
-    const best = (parkingByZone[zoneId] ?? []).find((p) => p.score > 0);
+    const best = rankParkingForCourier(parkingByZone[zoneId] ?? [], me)[0];
     if (best) {
       setParkSel(best.id);
       setFocus(best.c);
     }
-  }, [auto, zoneId, parkSel, parkingByZone]);
+  }, [auto, zoneId, parkSel, parkingByZone, me]);
 
   function gps() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.watchPosition((p) => {
+    if (gpsWatchId.current !== null) {
+      navigator.geolocation.clearWatch(gpsWatchId.current);
+      gpsWatchId.current = null;
+      setGpsActive(false);
+      setSpeed(null);
+      return;
+    }
+    if (!navigator.geolocation) {
+      setGpsError("Toto zařízení nepodporuje GPS.");
+      return;
+    }
+    setGpsError(null);
+    setGpsActive(true);
+    gpsWatchId.current = navigator.geolocation.watchPosition((p) => {
       setMe([p.coords.longitude, p.coords.latitude]);
       setSpeed(p.coords.speed != null ? p.coords.speed * 3.6 : null);
-    }, () => setErr("GPS nepovolena."), { enableHighAccuracy: true });
+      setGpsError(null);
+    }, (error) => {
+      setGpsError(error.code === error.PERMISSION_DENIED
+        ? "Povol přístup k poloze v nastavení prohlížeče."
+        : "Poloha není dostupná. Zkontroluj GPS a zkus to znovu.");
+      if (error.code === error.PERMISSION_DENIED && gpsWatchId.current !== null) {
+        navigator.geolocation.clearWatch(gpsWatchId.current);
+        gpsWatchId.current = null;
+        setGpsActive(false);
+        setSpeed(null);
+      }
+    }, { enableHighAccuracy: true, maximumAge: 10000, timeout: 15000 });
   }
+  useEffect(() => () => {
+    if (gpsWatchId.current !== null) navigator.geolocation.clearWatch(gpsWatchId.current);
+  }, []);
 
   const tot = log.reduce((a, x) => ({ net: a.net + x.net, km: a.km + x.km, m: a.m + x.mov, w: a.w + x.wait }), { net: 0, km: 0, m: 0, w: 0 });
   const shiftPh = tot.net / ((tot.m + tot.w) / 60);
@@ -222,9 +260,9 @@ function Index() {
           <div className="hud-label">Kurýr · Ostrava</div>
           <div className="font-display text-lg leading-tight">{now ? now.toLocaleTimeString("cs", { hour: "2-digit", minute: "2-digit" }) : "--:--"}</div>
         </div>
-        <button onClick={gps} className={`hud-panel pointer-events-auto px-4 py-2 text-left ${over ? "hud-alert" : ""}`}>
-          <div className="hud-label">{speed == null ? "GPS · klepni" : `limit ${limit}`}</div>
-          <div className="hud-value">{speed == null ? "—" : Math.round(speed)}<span className="hud-unit"> km/h</span></div>
+        <button onClick={gps} aria-label={gpsActive ? "Vypnout sledování GPS" : "Zapnout sledování GPS"} aria-pressed={gpsActive} className={`hud-panel pointer-events-auto px-4 py-2 text-left ${over ? "hud-alert" : ""}`}>
+          <div className="hud-label">{!gpsActive ? "GPS · zapnout" : over ? "Limit překročen" : `GPS · limit ${limit}`}</div>
+          <div className="hud-value">{speed == null ? (gpsActive ? "…" : "—") : Math.round(speed)}<span className="hud-unit"> km/h</span></div>
         </button>
         <button
           type="button"
@@ -247,7 +285,7 @@ function Index() {
           <div className="hud-label mb-1">Poptávka {hour}:00</div>
           <div className="flex items-center gap-2 text-xs"><span className="legend-dot bg-zone-low" />nízká<span className="legend-dot bg-zone-mid" />střední<span className="legend-dot bg-zone-high" />špička</div>
           <div className="mt-1 flex items-center gap-2 text-xs"><span className="legend-dot bg-primary" />P bezpečné<span className="legend-dot bg-warning" />OK<span className="legend-dot bg-destructive" />riziko</div>
-          <div className="mt-1 flex items-center gap-2 text-xs"><span className="font-mono">M</span><span className="legend-dot bg-primary" />&lt;50%<span className="legend-dot bg-warning" />50–84%<span className="legend-dot bg-destructive" />85%+ obsazeno</div>
+          <div className="mt-1 flex items-center gap-2 text-xs"><span className="font-mono">M</span><span className="legend-dot bg-primary" />&lt;50%<span className="legend-dot bg-warning" />50–84%<span className="legend-dot bg-destructive" />85%+ <span className="font-mono">F</span>zdarma</div>
         </div>
       </header>
 
@@ -269,9 +307,15 @@ function Index() {
                 </div>
                 <div className="text-muted-foreground">{best.note}</div>
                 <div className="mt-2 flex gap-4 font-mono text-xs">
-                  <span>poptávka {f(best.demand * 100)}%</span>{me && <span>{f(best.km, 1)} km · {f(best.km * cpk)} Kč</span>}
+                  {best.performance.orderCount > 0
+                    ? <span>{best.performance.orderCount} uložených zakázek · odhad {f(best.performance.netPerHour)} Kč/h</span>
+                    : <span>odhad poptávky {f(best.demand * 100)}%</span>}
+                  {me && <span>{f(best.km, 1)} km · ~{f(best.travelMin)} min</span>}
                 </div>
-                <button className="hud-btn mt-3 w-full" onClick={() => { setTab("Parkování"); loadParking(best.id); }}>Najít bezpečné stání →</button>
+                {me && <p className="mt-1 text-xs text-muted-foreground">Odhad čistého výnosu za dalších 30 min: {f(best.value)} Kč. Při přesunu odečítám náklad auta a odhad času jízdy.</p>}
+                <button className="hud-btn mt-3 w-full" onClick={() => { setTab("Parkování"); loadParking(best.id); }}>
+                  {auto ? "Zóna + vybrat vhodné stání →" : "Otevřít parkování v zóně →"}
+                </button>
               </div>
               <ol className="space-y-1">
                 {ranked.slice(1).map((z, i) => (
@@ -280,19 +324,30 @@ function Index() {
                       <span className="font-mono text-muted-foreground">{i + 2}</span>
                       <DemandDot score={z.demand} />
                       <span className="flex-1 text-left">{z.name}</span>
-                      <span className="font-mono text-xs text-muted-foreground">{f(z.demand * 100)}%</span>
+                      <span className="text-right font-mono text-xs text-muted-foreground">
+                        {z.performance.orderCount > 0 ? `${f(z.performance.netPerHour)} Kč/h` : `${f(z.demand * 100)}%`}
+                        {z.performance.orderCount > 0 && <span className="block">{z.performance.orderCount} zak.</span>}
+                      </span>
                     </button>
                   </li>
                 ))}
               </ol>
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
-                <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Poloautomat: rovnou vybrat nejlepší parkoviště
+                <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> Poloautomat: vybrat vhodné stání (zdarma má přednost)
               </label>
-              {!me && <button onClick={gps} className="hud-btn-ghost w-full">Zapnout GPS pro přesnější pořadí</button>}
+              {gpsError && <p role="status" className="text-xs text-destructive">{gpsError}</p>}
+              {!me && !gpsActive && <button onClick={gps} className="hud-btn-ghost w-full">Zapnout GPS pro přesnější pořadí</button>}
             </div>
           )}
 
-          {tab === "Nabídka" && <OfferTab S={S} setS={setS} onSave={(x) => setLog([...log, x])} />}
+          {tab === "Nabídka" && (
+            <div className="space-y-3">
+              <p className="text-xs text-muted-foreground">
+                {zone ? `Uložené zakázky se přiřadí k zóně ${zone.name} a zpřesní její doporučení.` : "Pro započítání výsledků do doporučení nejprve vyber zónu v Parkování."}
+              </p>
+              <OfferTab S={S} setS={setS} onSave={(x) => setLog([...log, { ...x, ...(zoneId ? { zoneId } : {}) }])} />
+            </div>
+          )}
 
           {tab === "Parkování" && (
             <div className="space-y-3">
@@ -324,7 +379,7 @@ function Index() {
                     </div>
                   </div>
                   <div className="mt-1 font-mono text-xs text-muted-foreground">
-                    {[park.tags.parking, park.tags.fee === "no" ? "zdarma" : park.tags.fee === "yes" ? "placené" : "poplatek ?", park.capacity === undefined && park.tags.capacity && `${park.tags.capacity} míst`, park.tags.maxstay && `max ${park.tags.maxstay}`, park.tags.lit === "yes" && "osvětlené", park.subscribersOnly && "jen pro předplatitele"].filter(Boolean).join(" · ")}
+                    {[park.tags.parking, park.isAccessibleForFree === true || park.tags.fee === "no" ? "zdarma" : park.isAccessibleForFree === false || park.tags.fee === "yes" ? "placené" : "poplatek neověřen", park.capacity === undefined && park.tags.capacity && `${park.tags.capacity} míst`, park.tags.maxstay && `max ${park.tags.maxstay}`, park.tags.lit === "yes" && "osvětlené", park.subscribersOnly && "jen pro předplatitele"].filter(Boolean).join(" · ")}
                     {zone && <> · {f(haversine(park.c, zone.c) * 1000)} m od centra zóny</>}
                   </div>
                   <ParkingAvailability park={park} />
@@ -333,6 +388,7 @@ function Index() {
                       Aktuální informace provozovatele
                     </a>
                   )}
+                  <p className="mt-2 text-xs text-muted-foreground">Čára na mapě je přímá vzdálenost; pro trasu použij navigaci.</p>
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     {Object.entries(nav(park.c)).map(([k, u]) => <a key={k} href={u} target="_blank" rel="noopener" className="hud-btn text-center capitalize">{k}</a>)}
                   </div>
@@ -346,13 +402,14 @@ function Index() {
                       <span className="flex-1 truncate text-left">{p.name}</span>
                       {p.available !== undefined && <span className="font-mono text-xs text-primary">{p.available}{p.capacity === undefined ? " volných" : `/${p.capacity}`}</span>}
                       {p.source !== "osm" && <ParkingSourceBadge source={p.source} />}
+                      {(p.isAccessibleForFree ?? p.tags.fee === "no") && <span className="rounded border border-primary/50 px-1.5 py-0.5 text-[10px] text-primary">zdarma</span>}
                       {zone && <span className="font-mono text-xs text-muted-foreground">{f(haversine(p.c, zone.c) * 1000)} m</span>}
                     </button>
                   </li>
                 ))}
               </ul>
               {!zoneId && <p className="text-muted-foreground">Vyber zónu nebo klepni na bod v mapě.</p>}
-              <p className="text-xs text-muted-foreground">Body M používají aktuální obsazenost z otevřených dat Ostravy (zelená: méně než 50 % obsazeno, žlutá: 50–84 %, červená: 85 % a více). Body P používají orientační skóre OSM. Značení na místě má vždy přednost.</p>
+              <p className="text-xs text-muted-foreground">Automatický výběr upřednostňuje stání označená jako bezplatná, volná a bezpečná; pokud takové nezná, nabídne nejlepší alternativu. F označuje bezplatné stání podle zdroje, M městská data a P OSM. Bezplatnost ani dostupnost nemusí být aktuální — ověř značení na místě.</p>
             </div>
           )}
 
@@ -416,7 +473,7 @@ const Stat = ({ l, v }: { l: string; v: string }) => (
   <div className="rounded-md border border-border bg-secondary p-2"><div className="hud-label">{l}</div><div className="font-display text-lg">{v}</div></div>
 );
 function Num({ l, v, set, step = 1 }: { l: string; v: number; set: (n: number) => void; step?: number }) {
-  return <label className="block"><span className="hud-label">{l}</span><input className="hud-input" type="number" inputMode="decimal" step={step} value={v || ""} onChange={(e) => set(parseFloat(e.target.value) || 0)} /></label>;
+  return <label className="block"><span className="hud-label">{l}</span><input className="hud-input" type="number" inputMode="decimal" min={0} step={step} value={v || ""} onChange={(e) => { const n = parseFloat(e.target.value); set(Number.isFinite(n) ? Math.max(0, n) : 0); }} /></label>;
 }
 
 function OfferTab({ S, setS, onSave }: { S: Settings; setS: (s: Settings) => void; onSave: (x: LogItem) => void }) {

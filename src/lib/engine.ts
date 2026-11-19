@@ -6,7 +6,20 @@ export const costPerKm = (s: Settings) => (s.fuel * s.cons) / 100 + s.wear;
 export type Offer = { reward: number; km: number; driveMin: number; waitMin: number };
 export function evaluate(o: Offer, s: Settings) {
   const t = o.driveMin + o.waitMin;
-  if (!o.reward || !o.km || !t) return null;
+  const inputs = [o.reward, o.km, o.driveMin, o.waitMin, s.fuel, s.cons, s.wear, s.tgt, s.eko];
+  if (
+    !inputs.every(Number.isFinite) ||
+    o.reward <= 0 ||
+    o.km <= 0 ||
+    o.driveMin < 0 ||
+    o.waitMin < 0 ||
+    t <= 0 ||
+    s.fuel < 0 ||
+    s.cons < 0 ||
+    s.wear < 0 ||
+    s.tgt < 0 ||
+    s.eko < 0
+  ) return null;
   const net = o.reward - o.km * costPerKm(s);
   const perHour = net / (t / 60);
   const perKm = net / o.km;
@@ -52,6 +65,7 @@ export type ParkingPoint = {
   occupancy?: number;
   observedAt?: string;
   officialUrl?: string;
+  isAccessibleForFree?: boolean;
   subscribersOnly?: boolean;
 };
 
@@ -239,6 +253,7 @@ export function parkingByZone(
       ...(facility.occupancy === undefined ? {} : { occupancy: facility.occupancy }),
       ...(facility.observedAt === undefined ? {} : { observedAt: facility.observedAt }),
       ...(facility.url === undefined ? {} : { officialUrl: facility.url }),
+      ...(facility.isAccessibleForFree === undefined ? {} : { isAccessibleForFree: facility.isAccessibleForFree }),
       ...(facility.subscribersOnly === undefined ? {} : { subscribersOnly: facility.subscribersOnly }),
     };
 
@@ -302,4 +317,57 @@ export function parkingScore(t: ParkingTags) {
   if (t.supervised === "yes" || t.surveillance) s += 5;
   if (t.maxstay) s -= 3;
   return Math.max(0, Math.min(100, s));
+}
+
+export function rankParkingForCourier(
+  parks: readonly ParkingPoint[],
+  origin: [number, number] | null,
+): ParkingPoint[] {
+  const isFree = (park: ParkingPoint) => park.isAccessibleForFree ?? park.tags.fee === "no";
+  return parks
+    .filter((park) => park.score > 0 && !park.subscribersOnly)
+    .slice()
+    .sort((a, b) => {
+      const byNotFull = Number(b.available !== 0) - Number(a.available !== 0);
+      if (byNotFull) return byNotFull;
+      const byFree = Number(isFree(b)) - Number(isFree(a));
+      if (byFree) return byFree;
+      const byKnownAvailability = Number(b.available !== undefined) - Number(a.available !== undefined);
+      if (byKnownAvailability) return byKnownAvailability;
+      const byOccupancy = (a.occupancy ?? 50) - (b.occupancy ?? 50);
+      if (byOccupancy) return byOccupancy;
+      const byDistance = origin ? haversine(a.c, origin) - haversine(b.c, origin) : 0;
+      return byDistance || b.score - a.score;
+    });
+}
+
+export type ZoneShiftEntry = {
+  zoneId?: string;
+  net: number;
+  mov: number;
+  wait: number;
+};
+
+export function estimateZonePerformance(
+  entries: readonly ZoneShiftEntry[],
+  zoneId: string,
+  priorNetPerHour: number,
+) {
+  const relevant = entries.filter((entry) =>
+    entry.zoneId === zoneId &&
+    Number.isFinite(entry.net) &&
+    Number.isFinite(entry.mov) &&
+    Number.isFinite(entry.wait) &&
+    entry.mov + entry.wait > 0
+  );
+  const minutes = relevant.reduce((total, entry) => total + entry.mov + entry.wait, 0);
+  const net = relevant.reduce((total, entry) => total + entry.net, 0);
+  const confidence = relevant.length / (relevant.length + 2);
+  const observedNetPerHour = minutes > 0 ? (net / minutes) * 60 : priorNetPerHour;
+  return {
+    orderCount: relevant.length,
+    observedMinutes: minutes,
+    netPerHour: observedNetPerHour * confidence + priorNetPerHour * (1 - confidence),
+    ordersPerHour: minutes > 0 ? (relevant.length / minutes) * 60 : 0,
+  };
 }
