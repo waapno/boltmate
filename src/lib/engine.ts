@@ -39,7 +39,34 @@ export const haversine = (a: [number, number], b: [number, number]) => {
 };
 
 export type ParkingTags = { access?: string; fee?: string; parking?: string; capacity?: string; lit?: string; supervised?: string; surveillance?: string; maxstay?: string; name?: string };
-export type ParkingPoint = { id: string; c: [number, number]; score: number; name: string; tags: ParkingTags };
+export type ParkingPoint = {
+  id: string;
+  c: [number, number];
+  score: number;
+  name: string;
+  tags: ParkingTags;
+  source: "osm" | "city" | "both";
+  facilityId?: string;
+  capacity?: number;
+  available?: number;
+  occupancy?: number;
+  observedAt?: string;
+  officialUrl?: string;
+  subscribersOnly?: boolean;
+};
+
+export type CityParkingFacility = {
+  id: string;
+  c: [number, number];
+  name: string;
+  capacity?: number;
+  available?: number;
+  occupancy?: number;
+  observedAt?: string;
+  url?: string;
+  isAccessibleForFree?: boolean;
+  subscribersOnly?: boolean;
+};
 
 const parkingTagKeys = [
   "access",
@@ -104,6 +131,78 @@ export function parseParkingElements(elements: unknown): ParkingPoint[] {
       score: parkingScore(tags),
       name: tags.name ?? (tags.parking === "multi-storey" ? "Parkovací dům" : "Parkoviště"),
       tags,
+      source: "osm",
+    }];
+  });
+}
+
+export function parseCityParkingFacilities(value: unknown): CityParkingFacility[] {
+  if (!Array.isArray(value)) return [];
+
+  return value.flatMap((item): CityParkingFacility[] => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return [];
+    const raw = item as Record<string, unknown>;
+    const id = raw["identifier"];
+    const name = raw["name"];
+    const geo = raw["geo"];
+    if (
+      typeof id !== "string" ||
+      id.length === 0 ||
+      id.length > 120 ||
+      typeof name !== "string" ||
+      name.length === 0 ||
+      !geo ||
+      typeof geo !== "object" ||
+      Array.isArray(geo)
+    ) return [];
+
+    const location = geo as Record<string, unknown>;
+    const latitude = location["latitude"];
+    const longitude = location["longitude"];
+    if (
+      typeof latitude !== "number" ||
+      typeof longitude !== "number" ||
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      Math.abs(latitude) > 90 ||
+      Math.abs(longitude) > 180
+    ) return [];
+
+    const capacity = raw["totalSpotNumber"];
+    const available = raw["availableSpotNumber"];
+    const dateObserved = raw["dateObserved"];
+    const url = raw["url"];
+    const isAccessibleForFree = raw["isAccessibleForFree"];
+    const subscribersOnly = raw["subscribersOnly"];
+    const validCapacity = typeof capacity === "number" && Number.isFinite(capacity) && capacity > 0
+      ? capacity
+      : undefined;
+    const validAvailable = typeof available === "number" &&
+        Number.isFinite(available) &&
+        available >= 0 &&
+        (validCapacity === undefined || available <= validCapacity)
+      ? available
+      : undefined;
+    const observedAt = typeof dateObserved === "string" && Number.isFinite(Date.parse(dateObserved))
+      ? dateObserved
+      : undefined;
+    const safeUrl = typeof url === "string" && /^https:\/\/ostravaparkovani\.cz\//i.test(url)
+      ? url
+      : undefined;
+
+    return [{
+      id,
+      c: [longitude, latitude],
+      name,
+      ...(validCapacity === undefined ? {} : { capacity: validCapacity }),
+      ...(validAvailable === undefined ? {} : { available: validAvailable }),
+      ...(validCapacity === undefined || validAvailable === undefined
+        ? {}
+        : { occupancy: Math.round(((validCapacity - validAvailable) / validCapacity) * 100) }),
+      ...(observedAt === undefined ? {} : { observedAt }),
+      ...(safeUrl === undefined ? {} : { url: safeUrl }),
+      ...(typeof isAccessibleForFree === "boolean" ? { isAccessibleForFree } : {}),
+      ...(typeof subscribersOnly === "boolean" ? { subscribersOnly } : {}),
     }];
   });
 }
@@ -112,13 +211,80 @@ export function parkingByZone(
   elements: unknown,
   zones: readonly { id: string; c: [number, number] }[],
   radiusKm = 0.7,
+  cityFacilities: unknown = [],
 ): Record<string, ParkingPoint[]> {
   const parks = parseParkingElements(elements);
+  const facilities = parseCityParkingFacilities(cityFacilities);
+  const merged = [...parks];
+
+  for (const facility of facilities) {
+    const nearestIndex = merged.reduce<number | null>((nearest, park, index) => {
+      if (park.source !== "osm") return nearest;
+      if (nearest === null) return haversine(park.c, facility.c) <= 0.035 ? index : null;
+      return haversine(park.c, facility.c) < haversine(merged[nearest]!.c, facility.c)
+        ? index
+        : nearest;
+    }, null);
+    const cityTags: ParkingTags = {
+      name: facility.name,
+      ...(facility.capacity === undefined ? {} : { capacity: String(facility.capacity) }),
+      ...(facility.isAccessibleForFree === undefined ? {} : { fee: facility.isAccessibleForFree ? "no" : "yes" }),
+      ...(facility.subscribersOnly ? { access: "customers_only" } : {}),
+    };
+    const cityScore = parkingScore(cityTags);
+    const cityData = {
+      facilityId: facility.id,
+      ...(facility.capacity === undefined ? {} : { capacity: facility.capacity }),
+      ...(facility.available === undefined ? {} : { available: facility.available }),
+      ...(facility.occupancy === undefined ? {} : { occupancy: facility.occupancy }),
+      ...(facility.observedAt === undefined ? {} : { observedAt: facility.observedAt }),
+      ...(facility.url === undefined ? {} : { officialUrl: facility.url }),
+      ...(facility.subscribersOnly === undefined ? {} : { subscribersOnly: facility.subscribersOnly }),
+    };
+
+    if (nearestIndex === null) {
+      merged.push({
+        id: `city:${facility.id}`,
+        c: facility.c,
+        score: cityScore,
+        name: facility.name,
+        tags: cityTags,
+        source: "city",
+        ...cityData,
+      });
+      continue;
+    }
+
+    const osm = merged[nearestIndex]!;
+    const mergedTags: ParkingTags = {
+      ...osm.tags,
+      name: facility.name,
+      ...(cityTags.capacity ?? osm.tags.capacity ? { capacity: cityTags.capacity ?? osm.tags.capacity } : {}),
+      ...(osm.tags.fee ?? cityTags.fee ? { fee: osm.tags.fee ?? cityTags.fee } : {}),
+      ...(facility.subscribersOnly ? { access: "customers_only" } : {}),
+    };
+    merged[nearestIndex] = {
+      ...osm,
+      c: facility.c,
+      score: facility.subscribersOnly ? 0 : parkingScore(mergedTags),
+      name: facility.name,
+      tags: mergedTags,
+      source: "both",
+      ...cityData,
+    };
+  }
+
   return Object.fromEntries(zones.map((zone) => [
     zone.id,
-    parks
+    merged
       .filter((park) => haversine(park.c, zone.c) <= radiusKm)
-      .sort((a, b) => b.score - haversine(b.c, zone.c) * 20 - (a.score - haversine(a.c, zone.c) * 20)),
+      .sort((a, b) => {
+        const priority = (park: ParkingPoint) =>
+          park.score -
+          haversine(park.c, zone.c) * 20 +
+          (park.occupancy === undefined ? 0 : (100 - park.occupancy) * 0.1);
+        return priority(b) - priority(a);
+      }),
   ]));
 }
 

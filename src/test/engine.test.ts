@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costPerKm, evaluate, parkingByZone, parkingScore, parseParkingElements, standOrMove, DEFAULT_SETTINGS as S } from "@/lib/engine";
+import { costPerKm, evaluate, parkingByZone, parkingScore, parseCityParkingFacilities, parseParkingElements, standOrMove, DEFAULT_SETTINGS as S } from "@/lib/engine";
 
 describe("engine", () => {
   it("cost per km = fuel*cons/100 + wear", () => expect(costPerKm(S)).toBeCloseTo(5.16));
@@ -32,6 +32,58 @@ describe("engine", () => {
 
     expect(grouped["center"]).toHaveLength(1);
     expect(grouped["center"]?.[0]?.id).toBe("node/1");
+  });
+  it("parses live city capacity, including zero free spaces", () => {
+    const facilities = parseCityParkingFacilities([
+      {
+        identifier: "lot-a",
+        name: "Parkoviště A",
+        geo: { latitude: 49.8, longitude: 18.2 },
+        totalSpotNumber: 100,
+        availableSpotNumber: 0,
+        dateObserved: "2026-11-19T08:00:00Z",
+        url: "https://ostravaparkovani.cz/cs/mapa?lot=lot-a",
+        subscribersOnly: false,
+      },
+      {
+        identifier: "bad",
+        name: "Invalid coordinates",
+        geo: { latitude: 91, longitude: 18.2 },
+      },
+    ]);
+
+    expect(facilities).toHaveLength(1);
+    expect(facilities[0]).toMatchObject({ id: "lot-a", capacity: 100, available: 0, occupancy: 100 });
+  });
+  it("merges nearby OSM and city records but retains unmatched city facilities", () => {
+    const grouped = parkingByZone(
+      [{ type: "node", id: 1, lon: 18.2, lat: 49.8, tags: { name: "OSM name", fee: "yes" } }],
+      [{ id: "center", c: [18.2, 49.8] }],
+      0.7,
+      [
+        {
+          identifier: "matched",
+          name: "City name",
+          geo: { latitude: 49.8001, longitude: 18.2001 },
+          totalSpotNumber: 20,
+          availableSpotNumber: 10,
+        },
+        {
+          identifier: "city-only",
+          name: "City only",
+          geo: { latitude: 49.805, longitude: 18.2 },
+        },
+      ],
+    );
+
+    expect(grouped["center"]).toHaveLength(2);
+    expect(grouped["center"]?.find((park) => park.facilityId === "matched")).toMatchObject({
+      id: "node/1",
+      name: "City name",
+      source: "both",
+      occupancy: 50,
+    });
+    expect(grouped["center"]?.some((park) => park.id === "city:city-only")).toBe(true);
   });
   it("stay when there is not better", () =>
     expect(standOrMove({ hereNet: 80, hereWait: 10, thereNet: 80, thereWait: 15, cycle: 20, moveKm: 3, moveMin: 8 }, S).go).toBe(false));

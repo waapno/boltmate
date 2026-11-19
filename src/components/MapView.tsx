@@ -8,7 +8,19 @@ import { OSTRAVA } from "@/lib/zones";
 maplibregl.setWorkerUrl(workerUrl);
 
 export type ZonePt = { id: string; name: string; c: [number, number]; score: number };
-export type ParkPt = { id: string; c: [number, number]; score: number; name: string };
+export type ParkPt = {
+  id: string;
+  c: [number, number];
+  score: number;
+  name: string;
+  source: "osm" | "city" | "both";
+  capacity?: number;
+  available?: number;
+  occupancy?: number;
+  observedAt?: string;
+  officialUrl?: string;
+  subscribersOnly?: boolean;
+};
 
 const fc = (features: Feature[]): FeatureCollection => ({ type: "FeatureCollection", features });
 const pt = (c: [number, number], p: Record<string, unknown>): Feature => ({ type: "Feature", geometry: { type: "Point", coordinates: c }, properties: p });
@@ -26,7 +38,13 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
   const sync = () => {
     const m = map.current; if (!m || !ready.current) return;
     (m.getSource("zones") as maplibregl.GeoJSONSource).setData(fc(zones.map((z) => pt(z.c, { id: z.id, name: z.name, score: z.score }))));
-    (m.getSource("park") as maplibregl.GeoJSONSource).setData(fc(parking.map((p) => pt(p.c, { id: p.id, score: p.score }))));
+    (m.getSource("park") as maplibregl.GeoJSONSource).setData(fc(parking.map((p) => pt(p.c, {
+      id: p.id,
+      name: p.name,
+      score: p.score,
+      source: p.source,
+      ...(p.occupancy === undefined ? {} : { occupancy: p.occupancy }),
+    }))));
     (m.getSource("me") as maplibregl.GeoJSONSource).setData(fc(me ? [pt(me, {})] : []));
     (m.getSource("route") as maplibregl.GeoJSONSource).setData(fc(me && target ? [{ type: "Feature", geometry: { type: "LineString", coordinates: [me, target] }, properties: {} }] : target ? [pt(target, {})] : []));
   };
@@ -50,9 +68,11 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
       m.addLayer({ id: "route-line", type: "line", source: "route", paint: { "line-color": "#3ddc97", "line-width": 3, "line-dasharray": [2, 1.5] } });
       m.addLayer({ id: "park", type: "circle", source: "park", paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 4, 17, 11],
-        "circle-color": ["step", ["get", "score"], "#ff5a3c", 45, "#f2b33d", 65, "#3ddc97"],
+        "circle-color": ["case", ["has", "occupancy"],
+          ["step", ["get", "occupancy"], "#3ddc97", 50, "#f2b33d", 85, "#ff5a3c"],
+          ["step", ["get", "score"], "#ff5a3c", 45, "#f2b33d", 65, "#3ddc97"]],
         "circle-stroke-color": "#0b0f14", "circle-stroke-width": 1.5 } });
-      m.addLayer({ id: "park-p", type: "symbol", source: "park", minzoom: 14, layout: { "text-field": "P", "text-size": 10, "text-font": ["Noto Sans Bold"], "text-allow-overlap": true }, paint: { "text-color": "#0b0f14" } });
+      m.addLayer({ id: "park-p", type: "symbol", source: "park", minzoom: 14, layout: { "text-field": ["case", ["==", ["get", "source"], "osm"], "P", "M"], "text-size": 10, "text-font": ["Noto Sans Bold"], "text-allow-overlap": true }, paint: { "text-color": "#0b0f14" } });
       m.addLayer({ id: "me", type: "circle", source: "me", paint: { "circle-radius": 8, "circle-color": "#4fc3ff", "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
       m.on("click", "park", (e) => cb.current.onPark(String(e.features?.[0]?.properties?.["id"])));
       m.on("click", "zone-core", (e) => cb.current.onZone(String(e.features?.[0]?.properties?.["id"])));
