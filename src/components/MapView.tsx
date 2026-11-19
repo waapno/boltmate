@@ -8,14 +8,14 @@ import { OSTRAVA } from "@/lib/zones";
 maplibregl.setWorkerUrl(workerUrl);
 
 export type ZonePt = { id: string; name: string; c: [number, number]; score: number };
-export type ParkPt = { id: number; c: [number, number]; score: number; name: string };
+export type ParkPt = { id: string; c: [number, number]; score: number; name: string };
 
 const fc = (features: Feature[]): FeatureCollection => ({ type: "FeatureCollection", features });
 const pt = (c: [number, number], p: Record<string, unknown>): Feature => ({ type: "Feature", geometry: { type: "Point", coordinates: c }, properties: p });
 
 export default function MapView({ zones, parking, me, target, focus, onPark, onZone }: {
   zones: ZonePt[]; parking: ParkPt[]; me: [number, number] | null; target: [number, number] | null;
-  focus: [number, number] | null; onPark: (id: number) => void; onZone: (id: string) => void;
+  focus: [number, number] | null; onPark: (id: string) => void; onZone: (id: string) => void;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
@@ -40,7 +40,7 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
     m.on("load", () => {
       for (const s of ["zones", "park", "me", "route"]) m.addSource(s, { type: "geojson", data: fc([]) });
       m.addLayer({ id: "zone-halo", type: "circle", source: "zones", paint: {
-        "circle-radius": ["interpolate", ["exponential", 2], ["zoom"], 10, ["*", 14, ["get", "score"]], 16, ["*", 600, ["get", "score"]]],
+        "circle-radius": ["interpolate", ["exponential", 2], ["zoom"], 10, ["*", 14, ["get", "score"]], 16, ["*", 60, ["get", "score"]]],
         "circle-color": ["interpolate", ["linear"], ["get", "score"], 0.25, "#3a6df0", 0.6, "#f2b33d", 1, "#ff5a3c"],
         "circle-opacity": 0.22, "circle-blur": 0.6 } });
       m.addLayer({ id: "zone-core", type: "circle", source: "zones", paint: { "circle-radius": 6, "circle-color": "#0b0f14", "circle-stroke-width": 2.5,
@@ -54,7 +54,7 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
         "circle-stroke-color": "#0b0f14", "circle-stroke-width": 1.5 } });
       m.addLayer({ id: "park-p", type: "symbol", source: "park", minzoom: 14, layout: { "text-field": "P", "text-size": 10, "text-font": ["Noto Sans Bold"], "text-allow-overlap": true }, paint: { "text-color": "#0b0f14" } });
       m.addLayer({ id: "me", type: "circle", source: "me", paint: { "circle-radius": 8, "circle-color": "#4fc3ff", "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
-      m.on("click", "park", (e) => cb.current.onPark(Number(e.features?.[0]?.properties?.["id"])));
+      m.on("click", "park", (e) => cb.current.onPark(String(e.features?.[0]?.properties?.["id"])));
       m.on("click", "zone-core", (e) => cb.current.onZone(String(e.features?.[0]?.properties?.["id"])));
       for (const l of ["park", "zone-core"]) { m.on("mouseenter", l, () => (m.getCanvas().style.cursor = "pointer")); m.on("mouseleave", l, () => (m.getCanvas().style.cursor = "")); }
       ready.current = true; sync();

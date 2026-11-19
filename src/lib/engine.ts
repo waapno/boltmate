@@ -39,6 +39,75 @@ export const haversine = (a: [number, number], b: [number, number]) => {
 };
 
 export type ParkingTags = { access?: string; fee?: string; parking?: string; capacity?: string; lit?: string; supervised?: string; surveillance?: string; maxstay?: string; name?: string };
+export type ParkingPoint = { id: string; c: [number, number]; score: number; name: string; tags: ParkingTags };
+
+const parkingTagKeys = [
+  "access",
+  "fee",
+  "parking",
+  "capacity",
+  "lit",
+  "supervised",
+  "surveillance",
+  "maxstay",
+  "name",
+] as const satisfies readonly (keyof ParkingTags)[];
+
+export function parseParkingElements(elements: unknown): ParkingPoint[] {
+  if (!Array.isArray(elements)) return [];
+
+  return elements.flatMap((element): ParkingPoint[] => {
+    if (!element || typeof element !== "object" || Array.isArray(element)) return [];
+    const raw = element as Record<string, unknown>;
+    const type = raw["type"];
+    const id = raw["id"];
+    if (
+      (type !== "node" && type !== "way" && type !== "relation") ||
+      typeof id !== "number" ||
+      !Number.isSafeInteger(id)
+    ) {
+      return [];
+    }
+
+    const rawCenter = raw["center"];
+    const center =
+      rawCenter && typeof rawCenter === "object"
+        ? (rawCenter as Record<string, unknown>)
+        : null;
+    const hasCoordinates = typeof raw["lon"] === "number" && typeof raw["lat"] === "number";
+    const lon = hasCoordinates ? raw["lon"] : center?.["lon"];
+    const lat = hasCoordinates ? raw["lat"] : center?.["lat"];
+    if (
+      typeof lon !== "number" ||
+      typeof lat !== "number" ||
+      !Number.isFinite(lon) ||
+      !Number.isFinite(lat) ||
+      Math.abs(lon) > 180 ||
+      Math.abs(lat) > 90
+    ) {
+      return [];
+    }
+
+    const rawTagsValue = raw["tags"];
+    const rawTags =
+      rawTagsValue && typeof rawTagsValue === "object" && !Array.isArray(rawTagsValue)
+        ? (rawTagsValue as Record<string, unknown>)
+        : {};
+    const tags: ParkingTags = {};
+    for (const key of parkingTagKeys) {
+      if (typeof rawTags[key] === "string") tags[key] = rawTags[key];
+    }
+
+    return [{
+      id: `${type}/${id}`,
+      c: [lon, lat],
+      score: parkingScore(tags),
+      name: tags.name ?? (tags.parking === "multi-storey" ? "Parkovací dům" : "Parkoviště"),
+      tags,
+    }];
+  });
+}
+
 /** 0–100 score: how safe & easy it is for a courier to stop here. */
 export function parkingScore(t: ParkingTags) {
   if (t.access === "private" || t.access === "no" || t.access === "customers_only") return 0;

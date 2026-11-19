@@ -1,6 +1,6 @@
 import { createFileRoute, ClientOnly } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { DEFAULT_SETTINGS, costPerKm, evaluate, haversine, parkingScore, standOrMove, type Settings, type ParkingTags } from "@/lib/engine";
+import { DEFAULT_SETTINGS, costPerKm, evaluate, haversine, parseParkingElements, standOrMove, type ParkingTags, type Settings } from "@/lib/engine";
 import { ZONES, zoneScoreAt } from "@/lib/zones";
 import type { ParkPt } from "@/components/MapView";
 
@@ -49,7 +49,7 @@ function Index() {
   const [limit, setLimit] = useState(50);
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [parks, setParks] = useState<Park[]>([]);
-  const [parkSel, setParkSel] = useState<number | null>(null);
+  const [parkSel, setParkSel] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [focus, setFocus] = useState<[number, number] | null>(null);
@@ -76,22 +76,40 @@ function Index() {
     setZoneId(id); setFocus(z.c); setLoading(true); setErr(null); setParkSel(null);
     const q = `[out:json][timeout:20];nwr["amenity"="parking"](around:700,${z.c[1]},${z.c[0]});out center tags 80;`;
     try {
-      let j: { elements: never[] } | null = null;
+      let found: Park[] | null = null;
+      let hadValidResponse = false;
       for (const u of OVERPASS) {
         try {
-          const r = await fetch(u, { method: "POST", body: "data=" + encodeURIComponent(q), signal: AbortSignal.timeout(15000) });
-          if (r.ok) { j = await r.json(); break; }
-        } catch { /* try next mirror */ }
+          const r = await fetch(u, {
+            method: "POST",
+            body: "data=" + encodeURIComponent(q),
+            signal: AbortSignal.timeout(15000),
+          });
+          if (!r.ok) continue;
+          const body: unknown = await r.json();
+          if (
+            !body ||
+            typeof body !== "object" ||
+            !("elements" in body) ||
+            !Array.isArray(body.elements)
+          ) continue;
+          hadValidResponse = true;
+          const list = parseParkingElements(body.elements).sort(
+            (a, b) => b.score - haversine(b.c, z.c) * 20 - (a.score - haversine(a.c, z.c) * 20),
+          );
+          if (list.length) {
+            found = list;
+            break;
+          }
+        } catch {
+          /* try next mirror */
+        }
       }
-      if (!j) throw new Error("all Overpass mirrors failed");
-      const list: Park[] = j.elements.map((e: { id: number; lat?: number; lon?: number; center?: { lat: number; lon: number }; tags?: ParkingTags }) => {
-        const c: [number, number] = [e.lon ?? e.center!.lon, e.lat ?? e.center!.lat];
-        const tags = e.tags ?? {};
-        return { id: e.id, c, tags, score: parkingScore(tags), name: tags.name ?? (tags.parking === "multi-storey" ? "Parkovací dům" : "Parkoviště") };
-      }).filter((p: Park) => p.score > 0)
-        .sort((a: Park, b: Park) => (b.score - haversine(b.c, z.c) * 20) - (a.score - haversine(a.c, z.c) * 20));
+      if (!hadValidResponse) throw new Error("all Overpass mirrors failed");
+      const list = found ?? [];
       setParks(list);
-      if (auto && list[0]) { setParkSel(list[0].id); setFocus(list[0].c); }
+      const best = list.find((p) => p.score > 0);
+      if (auto && best) { setParkSel(best.id); setFocus(best.c); }
     } catch (e) { setErr("Parkoviště se nepodařilo načíst (OSM server přetížený). Zkus znovu."); console.error(e); }
     finally { setLoading(false); }
   }
@@ -136,7 +154,7 @@ function Index() {
           <div className="hud-label">Náklad / km</div>
           <div className="hud-value">{f(cpk, 2)}<span className="hud-unit"> Kč</span></div>
         </div>
-        <div className="hud-panel hidden px-3 py-2 md:block">
+        <div className="hud-panel px-3 py-2">
           <div className="hud-label mb-1">Poptávka {hour}:00</div>
           <div className="flex items-center gap-2 text-xs"><span className="legend-dot bg-zone-low" />nízká<span className="legend-dot bg-zone-mid" />střední<span className="legend-dot bg-zone-high" />špička</div>
           <div className="mt-1 flex items-center gap-2 text-xs"><span className="legend-dot bg-primary" />P bezpečné<span className="legend-dot bg-warning" />OK<span className="legend-dot bg-destructive" />riziko</div>
