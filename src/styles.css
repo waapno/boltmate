@@ -1,0 +1,147 @@
+/*
+ * Tailwind v4 entry: config lives here, with no tailwind.config.js or PostCSS plugin.
+ * - Keep every @import in this top block, above @theme and the rest of the file. Install an
+ *   npm package before @importing its CSS. Never @import a remote URL (web fonts, CDN CSS): the
+ *   build resolves @import from the filesystem. Load those with a <link> in the head() of
+ *   src/routes/__root.tsx and name the family in a --font-* token in @theme inline below.
+ */
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Design system definition.
+ *
+ * The design lives in this file: oklch color tokens on the shadcn variables
+ * (--background, --foreground, --primary, --secondary, --muted, --accent, ...) plus
+ * new tokens as needed, font tokens, and custom styles and animations.
+ *
+ * The @theme inline block maps CSS custom properties to Tailwind utility
+ * classes (e.g. --color-primary -> bg-primary, text-primary).
+ *
+ * The :root and .dark blocks define the actual color values using oklch.
+ * All colors MUST use oklch format.
+ *
+ * To add a new semantic color:
+ * 1. Add the variable to :root (light value) and .dark (dark value)
+ * 2. Register it in @theme inline as --color-<name>: var(--<name>)
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+  --radius-4xl: calc(var(--radius) + 16px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-warning: var(--warning);
+  --color-zone-low: var(--zone-low);
+  --color-zone-mid: var(--zone-mid);
+  --color-zone-high: var(--zone-high);
+  --font-display: var(--font-display);
+  --font-mono: var(--font-mono-hud);
+  --font-sans: var(--font-display);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root {
+  --radius: 0.5rem;
+  --background: oklch(0.16 0.012 250);
+  --foreground: oklch(0.94 0.01 240);
+  --card: oklch(0.2 0.015 250);
+  --card-foreground: oklch(0.94 0.01 240);
+  --popover: oklch(0.2 0.015 250);
+  --popover-foreground: oklch(0.94 0.01 240);
+  --primary: oklch(0.8 0.17 160);
+  --primary-foreground: oklch(0.18 0.03 160);
+  --secondary: oklch(0.24 0.015 250);
+  --secondary-foreground: oklch(0.94 0.01 240);
+  --muted: oklch(0.24 0.015 250);
+  --muted-foreground: oklch(0.68 0.02 245);
+  --accent: oklch(0.8 0.15 75);
+  --accent-foreground: oklch(0.18 0.03 75);
+  --warning: oklch(0.8 0.15 75);
+  --destructive: oklch(0.66 0.2 30);
+  --destructive-foreground: oklch(0.98 0 0);
+  --border: oklch(1 0 0 / 12%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.8 0.17 160);
+  --zone-low: oklch(0.6 0.17 260);
+  --zone-mid: oklch(0.8 0.15 75);
+  --zone-high: oklch(0.68 0.21 35);
+  --panel: oklch(0.15 0.012 250 / 0.86);
+  --chart-1: oklch(0.8 0.17 160); --chart-2: oklch(0.8 0.15 75); --chart-3: oklch(0.66 0.2 30); --chart-4: oklch(0.6 0.17 260); --chart-5: oklch(0.7 0.1 200);
+  --sidebar: var(--card); --sidebar-foreground: var(--foreground); --sidebar-primary: var(--primary); --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: var(--secondary); --sidebar-accent-foreground: var(--foreground); --sidebar-border: var(--border); --sidebar-ring: var(--ring);
+  --font-display: "Space Grotesk", system-ui, sans-serif;
+  --font-mono-hud: "JetBrains Mono", ui-monospace, monospace;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+  }
+}
+
+@layer components {
+  .hud-panel { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); backdrop-filter: blur(12px); box-shadow: 0 10px 40px oklch(0 0 0 / 0.45), inset 0 1px 0 oklch(1 0 0 / 0.05); }
+  .hud-alert { border-color: var(--destructive); box-shadow: 0 0 0 2px var(--destructive), 0 0 30px oklch(0.66 0.2 30 / 0.5); }
+  .hud-label { font-family: var(--font-mono-hud); font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted-foreground); }
+  .hud-value { font-family: var(--font-mono-hud); font-size: 1.6rem; font-weight: 700; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .hud-unit { font-size: 0.7rem; color: var(--muted-foreground); font-weight: 400; }
+  .hud-tab { flex: 1; padding: 0.8rem 0.25rem; font-family: var(--font-mono-hud); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted-foreground); border-bottom: 2px solid transparent; }
+  .hud-tab-on { color: var(--primary); border-color: var(--primary); }
+  .hud-btn { display: inline-block; border-radius: calc(var(--radius) - 2px); background: var(--primary); color: var(--primary-foreground); padding: 0.7rem 0.9rem; font-weight: 700; }
+  .hud-btn:active { transform: scale(0.98); }
+  .hud-btn-ghost { border-radius: calc(var(--radius) - 2px); border: 1px solid var(--border); padding: 0.65rem; color: var(--foreground); }
+  .hud-row { display: flex; align-items: center; gap: 0.6rem; padding: 0.5rem 0.6rem; border: 1px solid var(--border); border-radius: calc(var(--radius) - 2px); background: var(--secondary); }
+  .hud-chip { font-size: 12px; padding: 0.35rem 0.6rem; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); }
+  .hud-chip-on { border-color: var(--primary); color: var(--primary); }
+  .hud-input { width: 100%; margin-top: 2px; padding: 0.55rem 0.6rem; font-family: var(--font-mono-hud); font-size: 16px; background: var(--background); border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); color: var(--foreground); }
+  .hud-input:focus { outline: 2px solid var(--ring); }
+  .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; }
+  .bar { width: 64px; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
+  .bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--zone-low), var(--zone-mid), var(--zone-high)); }
+  .maplibregl-ctrl-group { background: var(--panel) !important; }
+  .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1); }
+}
