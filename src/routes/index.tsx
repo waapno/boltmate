@@ -62,6 +62,7 @@ function Index() {
   const [focus, setFocus] = useState<[number, number] | null>(null);
   const [auto, setAuto] = useState(true);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [hudOpen, setHudOpen] = useState(false);
 
   useEffect(() => { setNow(new Date()); const i = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(i); }, []);
   useEffect(() => {
@@ -167,7 +168,7 @@ function Index() {
   const over = speed != null && speed > limit;
 
   return (
-    <main className="relative h-dvh w-full overflow-hidden bg-background text-foreground">
+    <main data-hud-open={hudOpen} className="relative h-dvh w-full overflow-hidden bg-background text-foreground">
       <ClientOnly fallback={<div className="absolute inset-0 grid place-items-center hud-label">Načítám mapu…</div>}>
         <Suspense fallback={null}>
           <MapView zones={ranked.map((z) => ({ id: z.id, name: z.name, c: z.c, score: z.demand }))} parking={allParks} me={me} target={target}
@@ -176,7 +177,7 @@ function Index() {
       </ClientOnly>
 
       {/* HUD top strip */}
-      <header className="pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap items-stretch gap-2 p-3">
+      <header className="mobile-hud-header pointer-events-none absolute inset-x-0 top-0 z-10 flex flex-wrap items-stretch gap-2 p-3">
         <div className="hud-panel pointer-events-auto px-4 py-2">
           <div className="hud-label">Kurýr · Ostrava</div>
           <div className="font-display text-lg leading-tight">{now ? now.toLocaleTimeString("cs", { hour: "2-digit", minute: "2-digit" }) : "--:--"}</div>
@@ -185,15 +186,24 @@ function Index() {
           <div className="hud-label">{speed == null ? "GPS · klepni" : `limit ${limit}`}</div>
           <div className="hud-value">{speed == null ? "—" : Math.round(speed)}<span className="hud-unit"> km/h</span></div>
         </button>
-        <div className="hud-panel px-4 py-2">
+        <button
+          type="button"
+          aria-expanded={hudOpen}
+          aria-controls="map-hud-panel"
+          onClick={() => setHudOpen((open) => !open)}
+          className="mobile-hud-toggle hud-panel pointer-events-auto"
+        >
+          {hudOpen ? "Skrýt HUD" : "Ovládání"}
+        </button>
+        <div className="mobile-hud-detail hud-panel px-4 py-2">
           <div className="hud-label">Směna Kč/h</div>
           <div className={`hud-value ${shiftPh >= S.tgt ? "text-primary" : "text-warning"}`}>{log.length ? f(shiftPh) : "—"}</div>
         </div>
-        <div className="hud-panel px-4 py-2">
+        <div className="mobile-hud-detail hud-panel px-4 py-2">
           <div className="hud-label">Náklad / km</div>
           <div className="hud-value">{f(cpk, 2)}<span className="hud-unit"> Kč</span></div>
         </div>
-        <div className="hud-panel px-3 py-2">
+        <div className="mobile-hud-detail hud-panel px-3 py-2">
           <div className="hud-label mb-1">Poptávka {hour}:00</div>
           <div className="flex items-center gap-2 text-xs"><span className="legend-dot bg-zone-low" />nízká<span className="legend-dot bg-zone-mid" />střední<span className="legend-dot bg-zone-high" />špička</div>
           <div className="mt-1 flex items-center gap-2 text-xs"><span className="legend-dot bg-primary" />P bezpečné<span className="legend-dot bg-warning" />OK<span className="legend-dot bg-destructive" />riziko</div>
@@ -201,7 +211,7 @@ function Index() {
       </header>
 
       {/* Control panel */}
-      <aside className="hud-panel absolute inset-x-3 bottom-3 z-10 flex max-h-[52dvh] flex-col md:inset-x-auto md:bottom-auto md:left-3 md:top-28 md:max-h-[calc(100dvh-8rem)] md:w-[380px]">
+      <aside id="map-hud-panel" className="mobile-hud-panel hud-panel absolute inset-x-3 bottom-3 z-10 flex max-h-[52dvh] flex-col md:inset-x-auto md:bottom-auto md:left-3 md:top-28 md:max-h-[calc(100dvh-8rem)] md:w-[380px]">
         <nav className="flex border-b border-border">
           {TABS.map((t) => (
             <button key={t} onClick={() => setTab(t)} className={`hud-tab ${tab === t ? "hud-tab-on" : ""}`}>{t}</button>
