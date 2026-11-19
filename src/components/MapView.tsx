@@ -65,5 +65,5 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
   useEffect(sync, [zones, parking, me, target]);
   useEffect(() => { if (focus && map.current) map.current.flyTo({ center: focus, zoom: 15.2, pitch: 40, duration: 1200 }); }, [focus]);
 
-  return <div ref={el} className="absolute inset-0" />;
+  return <div ref={el} className="absolute inset-0 h-full w-full" />;
 }
