@@ -108,6 +108,20 @@ export function parseParkingElements(elements: unknown): ParkingPoint[] {
   });
 }
 
+export function parkingByZone(
+  elements: unknown,
+  zones: readonly { id: string; c: [number, number] }[],
+  radiusKm = 0.7,
+): Record<string, ParkingPoint[]> {
+  const parks = parseParkingElements(elements);
+  return Object.fromEntries(zones.map((zone) => [
+    zone.id,
+    parks
+      .filter((park) => haversine(park.c, zone.c) <= radiusKm)
+      .sort((a, b) => b.score - haversine(b.c, zone.c) * 20 - (a.score - haversine(a.c, zone.c) * 20)),
+  ]));
+}
+
 /** 0–100 score: how safe & easy it is for a courier to stop here. */
 export function parkingScore(t: ParkingTags) {
   if (t.access === "private" || t.access === "no" || t.access === "customers_only") return 0;

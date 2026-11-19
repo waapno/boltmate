@@ -140,8 +140,6 @@
   .hud-input { width: 100%; margin-top: 2px; padding: 0.55rem 0.6rem; font-family: var(--font-mono-hud); font-size: 16px; background: var(--background); border: 1px solid var(--input); border-radius: calc(var(--radius) - 2px); color: var(--foreground); }
   .hud-input:focus { outline: 2px solid var(--ring); }
   .legend-dot { display: inline-block; width: 8px; height: 8px; border-radius: 999px; }
-  .bar { width: 64px; height: 6px; border-radius: 999px; background: var(--muted); overflow: hidden; }
-  .bar > span { display: block; height: 100%; background: linear-gradient(90deg, var(--zone-low), var(--zone-mid), var(--zone-high)); }
   .maplibregl-ctrl-group { background: var(--panel) !important; }
   .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1); }
 }

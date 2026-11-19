@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { costPerKm, evaluate, parkingScore, parseParkingElements, standOrMove, DEFAULT_SETTINGS as S } from "@/lib/engine";
+import { costPerKm, evaluate, parkingByZone, parkingScore, parseParkingElements, standOrMove, DEFAULT_SETTINGS as S } from "@/lib/engine";
 
 describe("engine", () => {
   it("cost per km = fuel*cons/100 + wear", () => expect(costPerKm(S)).toBeCloseTo(5.16));
@@ -22,6 +22,16 @@ describe("engine", () => {
     expect(parks[0]?.score).toBe(0);
     expect(parks[1]?.id).toBe("relation/12");
     expect(parks[2]?.name).toBe("Parkoviště");
+  });
+  it("groups cached parking by radius around each zone", () => {
+    const zones = [{ id: "center", c: [18.2, 49.8] as [number, number] }];
+    const grouped = parkingByZone([
+      { type: "node", id: 1, lon: 18.2, lat: 49.8 },
+      { type: "node", id: 2, lon: 18.3, lat: 49.8 },
+    ], zones);
+
+    expect(grouped["center"]).toHaveLength(1);
+    expect(grouped["center"]?.[0]?.id).toBe("node/1");
   });
   it("stay when there is not better", () =>
     expect(standOrMove({ hereNet: 80, hereWait: 10, thereNet: 80, thereWait: 15, cycle: 20, moveKm: 3, moveMin: 8 }, S).go).toBe(false));

@@ -1,6 +1,6 @@
 import { createFileRoute, ClientOnly } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
-import { DEFAULT_SETTINGS, costPerKm, evaluate, haversine, parseParkingElements, standOrMove, type ParkingTags, type Settings } from "@/lib/engine";
+import { DEFAULT_SETTINGS, costPerKm, evaluate, haversine, parkingByZone as groupParkingByZone, standOrMove, type ParkingTags, type Settings } from "@/lib/engine";
 import { ZONES, zoneScoreAt } from "@/lib/zones";
 import type { ParkPt } from "@/components/MapView";
 
@@ -22,7 +22,7 @@ export const Route = createFileRoute("/")({
 
 type Park = ParkPt & { tags: ParkingTags };
 type LogItem = { net: number; km: number; mov: number; wait: number; t: number };
-const OVERPASS = ["https://overpass-api.de/api/interpreter", "https://overpass.private.coffee/api/interpreter", "https://maps.mail.ru/osm/tools/overpass/api/interpreter"];
+const PARKING_STORAGE_KEY = "kp-osm-cache-v1";
 const TABS = ["Teď", "Nabídka", "Parkování", "Směna"] as const;
 
 const nav = (c: [number, number]) => ({
@@ -31,6 +31,13 @@ const nav = (c: [number, number]) => ({
   waze: `https://waze.com/ul?ll=${c[1]},${c[0]}&navigate=yes`,
 });
 const f = (x: number, d = 0) => (isFinite(x) ? x.toFixed(d) : "–");
+
+function getParkingElements(value: unknown): unknown[] {
+  if (!value || typeof value !== "object" || !("elements" in value) || !Array.isArray(value["elements"])) {
+    throw new Error("Invalid parking data response");
+  }
+  return value["elements"];
+}
 
 function useStored<T>(key: string, init: T) {
   const [v, setV] = useState<T>(init);
@@ -48,14 +55,67 @@ function Index() {
   const [speed, setSpeed] = useState<number | null>(null);
   const [limit, setLimit] = useState(50);
   const [zoneId, setZoneId] = useState<string | null>(null);
-  const [parks, setParks] = useState<Park[]>([]);
+  const [parkingByZone, setParkingByZone] = useState<Record<string, Park[]>>({});
   const [parkSel, setParkSel] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [focus, setFocus] = useState<[number, number] | null>(null);
   const [auto, setAuto] = useState(true);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   useEffect(() => { setNow(new Date()); const i = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(i); }, []);
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    try {
+      const saved = localStorage.getItem(PARKING_STORAGE_KEY);
+      if (saved) {
+        const savedPayload: unknown = JSON.parse(saved);
+        const elements = getParkingElements(savedPayload);
+        setParkingByZone(groupParkingByZone(elements, ZONES));
+      }
+    } catch (error) {
+      console.error("Could not load saved parking coordinates", error);
+    }
+
+    async function refresh() {
+      setLoading(true);
+      setErr(null);
+      try {
+        const response = await fetch(`${import.meta.env.BASE_URL}api/parking`, {
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`Parking API returned HTTP ${response.status}`);
+        const payload: unknown = await response.json();
+        const elements = getParkingElements(payload);
+        const grouped = groupParkingByZone(elements, ZONES);
+        if (!active) return;
+        setParkingByZone(grouped);
+        try {
+          localStorage.setItem(PARKING_STORAGE_KEY, JSON.stringify({ elements }));
+        } catch (error) {
+          console.error("Could not save parking coordinates for offline use", error);
+        }
+        if (response.headers.get("x-parking-stale") === "true") {
+          setErr("OSM se nepodařilo obnovit; používám dříve uložená parkoviště.");
+        }
+      } catch (error) {
+        if (controller.signal.aborted || !active) return;
+        console.error("Could not refresh parking data", error);
+        setErr("Parkoviště se nepodařilo obnovit. Zobrazuji uložená data, pokud jsou dostupná.");
+      } finally {
+        if (active) setLoading(false);
+      }
+    }
+
+    void refresh();
+    return () => {
+      active = false;
+      controller.abort();
+    };
+  }, [refreshKey]);
+
   const hour = now?.getHours() ?? 12;
   const cpk = costPerKm(S);
 
@@ -68,51 +128,30 @@ function Index() {
   }).sort((a, b) => b.value - a.value), [hour, me, S.tgt, cpk]);
 
   const zone = ZONES.find((z) => z.id === zoneId) ?? null;
-  const park = parks.find((p) => p.id === parkSel) ?? null;
+  const parks = zoneId ? parkingByZone[zoneId] ?? [] : [];
+  const allParks = useMemo(
+    () => [...new Map(Object.values(parkingByZone).flat().map((p) => [p.id, p])).values()],
+    [parkingByZone],
+  );
+  const park = allParks.find((p) => p.id === parkSel) ?? null;
   const target = park?.c ?? zone?.c ?? null;
 
-  async function loadParking(id: string) {
+  function loadParking(id: string) {
     const z = ZONES.find((x) => x.id === id)!;
-    setZoneId(id); setFocus(z.c); setLoading(true); setErr(null); setParkSel(null);
-    const q = `[out:json][timeout:20];nwr["amenity"="parking"](around:700,${z.c[1]},${z.c[0]});out center tags 80;`;
-    try {
-      let found: Park[] | null = null;
-      let hadValidResponse = false;
-      for (const u of OVERPASS) {
-        try {
-          const r = await fetch(u, {
-            method: "POST",
-            body: "data=" + encodeURIComponent(q),
-            signal: AbortSignal.timeout(15000),
-          });
-          if (!r.ok) continue;
-          const body: unknown = await r.json();
-          if (
-            !body ||
-            typeof body !== "object" ||
-            !("elements" in body) ||
-            !Array.isArray(body.elements)
-          ) continue;
-          hadValidResponse = true;
-          const list = parseParkingElements(body.elements).sort(
-            (a, b) => b.score - haversine(b.c, z.c) * 20 - (a.score - haversine(a.c, z.c) * 20),
-          );
-          if (list.length) {
-            found = list;
-            break;
-          }
-        } catch {
-          /* try next mirror */
-        }
-      }
-      if (!hadValidResponse) throw new Error("all Overpass mirrors failed");
-      const list = found ?? [];
-      setParks(list);
-      const best = list.find((p) => p.score > 0);
-      if (auto && best) { setParkSel(best.id); setFocus(best.c); }
-    } catch (e) { setErr("Parkoviště se nepodařilo načíst (OSM server přetížený). Zkus znovu."); console.error(e); }
-    finally { setLoading(false); }
+    setZoneId(id);
+    setFocus(z.c);
+    setErr(null);
+    setParkSel(null);
   }
+
+  useEffect(() => {
+    if (!auto || !zoneId || parkSel) return;
+    const best = (parkingByZone[zoneId] ?? []).find((p) => p.score > 0);
+    if (best) {
+      setParkSel(best.id);
+      setFocus(best.c);
+    }
+  }, [auto, zoneId, parkSel, parkingByZone]);
 
   function gps() {
     if (!navigator.geolocation) return;
@@ -131,7 +170,7 @@ function Index() {
     <main className="relative h-dvh w-full overflow-hidden bg-background text-foreground">
       <ClientOnly fallback={<div className="absolute inset-0 grid place-items-center hud-label">Načítám mapu…</div>}>
         <Suspense fallback={null}>
-          <MapView zones={ranked.map((z) => ({ id: z.id, name: z.name, c: z.c, score: z.demand }))} parking={parks} me={me} target={target}
+          <MapView zones={ranked.map((z) => ({ id: z.id, name: z.name, c: z.c, score: z.demand }))} parking={allParks} me={me} target={target}
             focus={focus} onPark={(id) => { setParkSel(id); setTab("Parkování"); }} onZone={(id) => { setTab("Parkování"); loadParking(id); }} />
         </Suspense>
       </ClientOnly>
@@ -173,7 +212,10 @@ function Index() {
             <div className="space-y-3">
               <div className="hud-label">Doporučení · {me ? "podle tvé polohy" : "bez GPS, jen poptávka"}</div>
               <div className="rounded-md border border-primary/40 bg-primary/10 p-3">
-                <div className="font-display text-xl">{best.name}</div>
+                <div className="flex items-center gap-2 font-display text-xl">
+                  <DemandDot score={best.demand} />
+                  {best.name}
+                </div>
                 <div className="text-muted-foreground">{best.note}</div>
                 <div className="mt-2 flex gap-4 font-mono text-xs">
                   <span>poptávka {f(best.demand * 100)}%</span>{me && <span>{f(best.km, 1)} km · {f(best.km * cpk)} Kč</span>}
@@ -185,8 +227,9 @@ function Index() {
                   <li key={z.id}>
                     <button onClick={() => { setTab("Parkování"); loadParking(z.id); }} className="hud-row w-full">
                       <span className="font-mono text-muted-foreground">{i + 2}</span>
+                      <DemandDot score={z.demand} />
                       <span className="flex-1 text-left">{z.name}</span>
-                      <span className="bar"><span style={{ width: `${z.demand * 100}%` }} /></span>
+                      <span className="font-mono text-xs text-muted-foreground">{f(z.demand * 100)}%</span>
                     </button>
                   </li>
                 ))}
@@ -207,8 +250,14 @@ function Index() {
                   <button key={z.id} onClick={() => loadParking(z.id)} className={`hud-chip ${zoneId === z.id ? "hud-chip-on" : ""}`}>{z.name}</button>
                 ))}
               </div>
-              {loading && <div className="hud-label animate-pulse">Skenuji OSM parkoviště v okruhu 700 m…</div>}
-              {err && <div className="text-destructive">{err}</div>}
+              {loading && <div className="hud-label animate-pulse">Aktualizuji přednačtená OSM parkoviště…</div>}
+              {err && (
+                <div className="space-y-2 text-destructive">
+                  <p>{err}</p>
+                  <button className="hud-btn-ghost w-full" onClick={() => setRefreshKey((key) => key + 1)}>Zkusit aktualizovat</button>
+                </div>
+              )}
+              {!loading && !err && <p className="text-xs text-muted-foreground">Souřadnice parkovišť jsou uložené v tomto telefonu pro použití offline. Offline mapu je nutné stáhnout v navigační aplikaci.</p>}
               {park && (
                 <div className="rounded-md border border-border bg-secondary p-3">
                   <div className="flex items-center justify-between">
@@ -262,6 +311,11 @@ function Index() {
 function ScoreBadge({ s }: { s: number }) {
   const c = s >= 65 ? "bg-primary text-primary-foreground" : s >= 45 ? "bg-warning text-background" : "bg-destructive text-destructive-foreground";
   return <span className={`inline-grid h-7 w-9 place-items-center rounded font-mono text-xs font-bold ${c}`}>{s}</span>;
+}
+function DemandDot({ score }: { score: number }) {
+  const level = score <= 0.25 ? "nízká" : score <= 0.6 ? "střední" : "špička";
+  const color = score <= 0.25 ? "bg-zone-low" : score <= 0.6 ? "bg-zone-mid" : "bg-zone-high";
+  return <span role="img" aria-label={`${level} poptávka`} className={`legend-dot shrink-0 ${color}`} />;
 }
 const Stat = ({ l, v }: { l: string; v: string }) => (
   <div className="rounded-md border border-border bg-secondary p-2"><div className="hud-label">{l}</div><div className="font-display text-lg">{v}</div></div>

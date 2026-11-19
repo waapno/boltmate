@@ -27,3 +27,7 @@ npm run dev
 - TypeScript
 - React
 - Tailwind CSS
+
+## Parking data and offline coordinates
+
+The app fetches parking from OSM through `/api/parking`, which caches the shared response in the Cloudflare Worker cache and refreshes it periodically. Each device also saves the coordinates locally, so previously downloaded parking remains available when that device is offline. This cache contains parking data only; offline map tiles and route planning must be downloaded or provided by a navigation app separately.
