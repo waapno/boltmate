@@ -1,8 +1,24 @@
 import { describe, expect, it } from "vitest";
-import { costPerKm, estimateZonePerformance, evaluate, parkingByZone, parkingScore, parseCityParkingFacilities, parseParkingElements, rankParkingForCourier, standOrMove, DEFAULT_SETTINGS as S } from "@/lib/engine";
+import {
+  costPerKm,
+  estimateZonePerformance,
+  evaluate,
+  minimumReward,
+  parkingByZone,
+  parkingScore,
+  parseCityParkingFacilities,
+  parseParkingElements,
+  rankParkingForCourier,
+  standOrMove,
+  DEFAULT_SETTINGS as S,
+} from "@/lib/engine";
 
 describe("engine", () => {
   it("cost per km = fuel*cons/100 + wear", () => expect(costPerKm(S)).toBeCloseTo(5.16));
+  it("calculates the gross reward needed to cover car costs and hourly target", () => {
+    expect(minimumReward(6, 25, S)).toBeCloseTo(135.13, 1);
+    expect(minimumReward(0, 25, S)).toBeNull();
+  });
   it("SMART accepts 120 Kč / 6 km / 25 min", () => {
     const r = evaluate({ reward: 120, km: 6, driveMin: 20, waitMin: 5 }, S)!;
     expect(r.net).toBeCloseTo(89.04);

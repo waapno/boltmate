@@ -4,6 +4,7 @@ import workerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Feature, FeatureCollection } from "geojson";
 import { OSTRAVA } from "@/lib/zones";
+import type { DeliverySpot } from "@/lib/delivery-spots";
 
 maplibregl.setWorkerUrl(workerUrl);
 
@@ -27,23 +28,24 @@ export type ParkPt = {
 const fc = (features: Feature[]): FeatureCollection => ({ type: "FeatureCollection", features });
 const pt = (c: [number, number], p: Record<string, unknown>): Feature => ({ type: "Feature", geometry: { type: "Point", coordinates: c }, properties: p });
 
-export default function MapView({ zones, parking, me, target, focus, onPark, onZone }: {
+export default function MapView({ zones, parking, deliverySpots, showDeliverySpots, me, target, focus, onPark, onZone }: {
   zones: ZonePt[]; parking: ParkPt[]; me: [number, number] | null; target: [number, number] | null;
+  deliverySpots: DeliverySpot[]; showDeliverySpots: boolean;
   focus: [number, number] | null; onPark: (id: string) => void; onZone: (id: string) => void;
 }) {
   const el = useRef<HTMLDivElement>(null);
   const map = useRef<maplibregl.Map | null>(null);
   const ready = useRef(false);
   const cb = useRef({ onPark, onZone });
-  const data = useRef({ zones, parking, me, target });
+  const data = useRef({ zones, parking, deliverySpots, showDeliverySpots, me, target });
   const sync = useRef<() => void>(() => {});
   cb.current = { onPark, onZone };
-  data.current = { zones, parking, me, target };
+  data.current = { zones, parking, deliverySpots, showDeliverySpots, me, target };
 
   sync.current = () => {
     const m = map.current;
     if (!m || !ready.current) return;
-    const { zones, parking, me, target } = data.current;
+    const { zones, parking, deliverySpots, showDeliverySpots, me, target } = data.current;
     (m.getSource("zones") as maplibregl.GeoJSONSource).setData(fc(zones.map((z) => pt(z.c, { id: z.id, name: z.name, score: z.score }))));
     (m.getSource("park") as maplibregl.GeoJSONSource).setData(fc(parking.map((p) => pt(p.c, {
       id: p.id,
@@ -53,6 +55,14 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
       free: p.isAccessibleForFree ?? p.tags?.fee === "no",
       ...(p.occupancy === undefined ? {} : { occupancy: p.occupancy }),
     }))));
+    (m.getSource("delivery-spots") as maplibregl.GeoJSONSource).setData(fc(deliverySpots.map((spot) => pt(spot.c, {
+      name: spot.name,
+      address: spot.address,
+      category: spot.category,
+      access: spot.access,
+    }))));
+    m.setLayoutProperty("delivery-spots", "visibility", showDeliverySpots ? "visible" : "none");
+    m.setLayoutProperty("delivery-spots-label", "visibility", showDeliverySpots ? "visible" : "none");
     (m.getSource("me") as maplibregl.GeoJSONSource).setData(fc(me ? [pt(me, {})] : []));
     (m.getSource("route") as maplibregl.GeoJSONSource).setData(fc(me && target ? [{ type: "Feature", geometry: { type: "LineString", coordinates: [me, target] }, properties: {} }] : target ? [pt(target, {})] : []));
   };
@@ -64,7 +74,7 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
     m.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
     m.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
     m.on("load", () => {
-      for (const s of ["zones", "park", "me", "route"]) m.addSource(s, { type: "geojson", data: fc([]) });
+      for (const s of ["zones", "park", "delivery-spots", "me", "route"]) m.addSource(s, { type: "geojson", data: fc([]) });
       m.addLayer({ id: "zone-halo", type: "circle", source: "zones", paint: {
         "circle-radius": ["interpolate", ["exponential", 2], ["zoom"], 10, ["*", 14, ["get", "score"]], 16, ["*", 60, ["get", "score"]]],
         "circle-color": ["interpolate", ["linear"], ["get", "score"], 0.25, "#3a6df0", 0.6, "#f2b33d", 1, "#ff5a3c"],
@@ -81,16 +91,46 @@ export default function MapView({ zones, parking, me, target, focus, onPark, onZ
           ["step", ["get", "score"], "#ff5a3c", 45, "#f2b33d", 65, "#3ddc97"]],
         "circle-stroke-color": "#0b0f14", "circle-stroke-width": 1.5 } });
       m.addLayer({ id: "park-p", type: "symbol", source: "park", minzoom: 14, layout: { "text-field": ["case", ["get", "free"], "F", ["==", ["get", "source"], "osm"], "P", "M"], "text-size": 10, "text-font": ["Noto Sans Bold"], "text-allow-overlap": true }, paint: { "text-color": "#0b0f14" } });
+      m.addLayer({ id: "delivery-spots", type: "circle", source: "delivery-spots", paint: {
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 5, 16, 10],
+        "circle-color": "#c084fc",
+        "circle-stroke-color": "#fff",
+        "circle-stroke-width": 1.5,
+      } });
+      m.addLayer({ id: "delivery-spots-label", type: "symbol", source: "delivery-spots", minzoom: 13, layout: {
+        "text-field": ["get", "name"],
+        "text-size": 10,
+        "text-offset": [0, 1.2],
+        "text-font": ["Noto Sans Bold"],
+        "text-allow-overlap": false,
+      }, paint: { "text-color": "#e9d5ff", "text-halo-color": "#0b0f14", "text-halo-width": 1.5 } });
+      m.on("click", "delivery-spots", (event) => {
+        const properties = event.features?.[0]?.properties;
+        if (!properties) return;
+        const content = document.createElement("div");
+        const title = document.createElement("strong");
+        title.textContent = String(properties["name"] ?? "");
+        content.append(title);
+        for (const key of ["address", "category", "access"]) {
+          const line = document.createElement("p");
+          line.textContent = String(properties[key] ?? "");
+          content.append(line);
+        }
+        new maplibregl.Popup({ closeButton: true, maxWidth: "280px" })
+          .setLngLat(event.lngLat)
+          .setDOMContent(content)
+          .addTo(m);
+      });
       m.addLayer({ id: "me", type: "circle", source: "me", paint: { "circle-radius": 8, "circle-color": "#4fc3ff", "circle-stroke-color": "#fff", "circle-stroke-width": 3 } });
       m.on("click", "park", (e) => cb.current.onPark(String(e.features?.[0]?.properties?.["id"])));
       m.on("click", "zone-core", (e) => cb.current.onZone(String(e.features?.[0]?.properties?.["id"])));
-      for (const l of ["park", "zone-core"]) { m.on("mouseenter", l, () => (m.getCanvas().style.cursor = "pointer")); m.on("mouseleave", l, () => (m.getCanvas().style.cursor = "")); }
+      for (const l of ["park", "zone-core", "delivery-spots"]) { m.on("mouseenter", l, () => (m.getCanvas().style.cursor = "pointer")); m.on("mouseleave", l, () => (m.getCanvas().style.cursor = "")); }
       ready.current = true; sync.current();
     });
     return () => { m.remove(); map.current = null; ready.current = false; };
   }, []);
 
-  useEffect(() => { sync.current(); }, [zones, parking, me, target]);
+  useEffect(() => { sync.current(); }, [zones, parking, deliverySpots, showDeliverySpots, me, target]);
   useEffect(() => { if (focus && map.current) map.current.flyTo({ center: focus, zoom: 15.2, pitch: 40, duration: 1200 }); }, [focus]);
 
   return <div ref={el} className="absolute inset-0 h-full w-full" />;

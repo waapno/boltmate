@@ -4,6 +4,22 @@ export const DEFAULT_SETTINGS: Settings = { fuel: 38, cons: 7, wear: 2.5, tgt: 2
 export const costPerKm = (s: Settings) => (s.fuel * s.cons) / 100 + s.wear;
 
 export type Offer = { reward: number; km: number; driveMin: number; waitMin: number };
+export function minimumReward(km: number, minutes: number, s: Settings) {
+  const inputs = [km, minutes, s.fuel, s.cons, s.wear, s.tgt];
+  if (
+    !inputs.every(Number.isFinite) ||
+    km <= 0 ||
+    minutes <= 0 ||
+    s.fuel < 0 ||
+    s.cons < 0 ||
+    s.wear < 0 ||
+    s.tgt < 0
+  ) {
+    return null;
+  }
+  return km * costPerKm(s) + (minutes / 60) * s.tgt;
+}
+
 export function evaluate(o: Offer, s: Settings) {
   const t = o.driveMin + o.waitMin;
   const inputs = [o.reward, o.km, o.driveMin, o.waitMin, s.fuel, s.cons, s.wear, s.tgt, s.eko];

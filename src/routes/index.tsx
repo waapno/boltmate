@@ -1,8 +1,21 @@
 import { createFileRoute, ClientOnly } from "@tanstack/react-router";
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { DEFAULT_SETTINGS, costPerKm, estimateZonePerformance, evaluate, haversine, parkingByZone as groupParkingByZone, rankParkingForCourier, standOrMove, type ParkingTags, type Settings } from "@/lib/engine";
+import {
+  DEFAULT_SETTINGS,
+  costPerKm,
+  estimateZonePerformance,
+  evaluate,
+  haversine,
+  minimumReward,
+  parkingByZone as groupParkingByZone,
+  rankParkingForCourier,
+  standOrMove,
+  type ParkingTags,
+  type Settings,
+} from "@/lib/engine";
 import { ZONES, zoneScoreAt } from "@/lib/zones";
 import type { ParkPt } from "@/components/MapView";
+import { parseDeliverySpotsCsv, type DeliverySpot } from "@/lib/delivery-spots";
 
 const MapView = lazy(() => import("@/components/MapView"));
 
@@ -24,6 +37,8 @@ type Park = ParkPt & { tags: ParkingTags };
 type ParkingData = { elements: unknown[]; facilities: unknown[] };
 type ParkingSource = { status: "fresh" | "stale" | "unavailable"; fetchedAt: string | null };
 type LogItem = { net: number; km: number; mov: number; wait: number; t: number; zoneId?: string };
+type OfferDraft = { reward: number; pk: number; dk: number; driveMin: number; waitMin: number };
+const DEFAULT_OFFER: OfferDraft = { reward: 0, pk: 0, dk: 0, driveMin: 0, waitMin: 5 };
 const PARKING_STORAGE_KEY = "kp-parking-cache-v2";
 const LEGACY_PARKING_STORAGE_KEY = "kp-osm-cache-v1";
 const TABS = ["Teď", "Nabídka", "Parkování", "Směna"] as const;
@@ -74,16 +89,21 @@ function useStored<T>(key: string, init: T) {
 function Index() {
   const [S, setS] = useStored<Settings>("ks", DEFAULT_SETTINGS);
   const [log, setLog] = useStored<LogItem[]>("kl", []);
+  const [offer, setOffer] = useStored<OfferDraft>("ko", DEFAULT_OFFER);
   const [tab, setTab] = useState<(typeof TABS)[number]>("Teď");
   const [now, setNow] = useState<Date | null>(null);
   const [me, setMe] = useState<[number, number] | null>(null);
   const [speed, setSpeed] = useState<number | null>(null);
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [gpsActive, setGpsActive] = useState(false);
+  const [presetId, setPresetId] = useState<string | null>(null);
   const gpsWatchId = useRef<number | null>(null);
   const [limit, setLimit] = useState(50);
   const [zoneId, setZoneId] = useState<string | null>(null);
   const [parkingData, setParkingData] = useState<ParkingData>({ elements: [], facilities: [] });
+  const [deliverySpots, setDeliverySpots] = useState<DeliverySpot[]>([]);
+  const [deliverySpotsError, setDeliverySpotsError] = useState<string | null>(null);
+  const [showDeliverySpots, setShowDeliverySpots] = useStored("show-delivery-spots", true);
   const [parkingSources, setParkingSources] = useState<{ osm: ParkingSource; city: ParkingSource } | null>(null);
   const [parkSel, setParkSel] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -97,6 +117,27 @@ function Index() {
   useEffect(() => {
     const interval = setInterval(() => setRefreshKey((key) => key + 1), 5 * 60 * 1000);
     return () => clearInterval(interval);
+  }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    async function loadDeliverySpots() {
+      try {
+        const response = await fetch(`${import.meta.env.BASE_URL}bolt_delivery_spoty_ostrava.csv`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error(`CSV returned HTTP ${response.status}`);
+        const csv = await response.text();
+        setDeliverySpots(parseDeliverySpotsCsv(csv));
+        setDeliverySpotsError(null);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        console.error("Could not load delivery spots CSV", error);
+        setDeliverySpotsError("Vrstva CSV se nepodařila načíst.");
+      }
+    }
+
+    void loadDeliverySpots();
+    return () => controller.abort();
   }, []);
   useEffect(() => {
     let active = true;
@@ -222,6 +263,7 @@ function Index() {
     setGpsActive(true);
     gpsWatchId.current = navigator.geolocation.watchPosition((p) => {
       setMe([p.coords.longitude, p.coords.latitude]);
+      setPresetId(null);
       setSpeed(p.coords.speed != null ? p.coords.speed * 3.6 : null);
       setGpsError(null);
     }, (error) => {
@@ -240,16 +282,39 @@ function Index() {
     if (gpsWatchId.current !== null) navigator.geolocation.clearWatch(gpsWatchId.current);
   }, []);
 
+  function selectZonePreset(id: string) {
+    const preset = ZONES.find((item) => item.id === id);
+    if (!preset) return;
+    if (gpsWatchId.current !== null) {
+      navigator.geolocation.clearWatch(gpsWatchId.current);
+      gpsWatchId.current = null;
+    }
+    setGpsActive(false);
+    setSpeed(null);
+    setGpsError(null);
+    setPresetId(preset.id);
+    setMe(preset.c);
+    loadParking(preset.id);
+  }
+
   const tot = log.reduce((a, x) => ({ net: a.net + x.net, km: a.km + x.km, m: a.m + x.mov, w: a.w + x.wait }), { net: 0, km: 0, m: 0, w: 0 });
   const shiftPh = tot.net / ((tot.m + tot.w) / 60);
   const best = ranked[0]!;
   const over = speed != null && speed > limit;
+  const gpsLabel = !gpsActive
+    ? presetId
+      ? `Předvolba · ${ZONES.find((z) => z.id === presetId)?.name}`
+      : "GPS · zapnout"
+    : over
+      ? "Limit překročen"
+      : `GPS · limit ${limit}`;
 
   return (
     <main data-hud-open={hudOpen} className="relative h-dvh w-full overflow-hidden bg-background text-foreground">
       <ClientOnly fallback={<div className="absolute inset-0 grid place-items-center hud-label">Načítám mapu…</div>}>
         <Suspense fallback={null}>
-          <MapView zones={ranked.map((z) => ({ id: z.id, name: z.name, c: z.c, score: z.demand }))} parking={allParks} me={me} target={target}
+          <MapView zones={ranked.map((z) => ({ id: z.id, name: z.name, c: z.c, score: z.demand }))} parking={allParks}
+            deliverySpots={deliverySpots} showDeliverySpots={showDeliverySpots} me={me} target={target}
             focus={focus} onPark={(id) => { setParkSel(id); setTab("Parkování"); }} onZone={(id) => { setTab("Parkování"); loadParking(id); }} />
         </Suspense>
       </ClientOnly>
@@ -261,7 +326,7 @@ function Index() {
           <div className="font-display text-lg leading-tight">{now ? now.toLocaleTimeString("cs", { hour: "2-digit", minute: "2-digit" }) : "--:--"}</div>
         </div>
         <button onClick={gps} aria-label={gpsActive ? "Vypnout sledování GPS" : "Zapnout sledování GPS"} aria-pressed={gpsActive} className={`hud-panel pointer-events-auto px-4 py-2 text-left ${over ? "hud-alert" : ""}`}>
-          <div className="hud-label">{!gpsActive ? "GPS · zapnout" : over ? "Limit překročen" : `GPS · limit ${limit}`}</div>
+          <div className="hud-label">{gpsLabel}</div>
           <div className="hud-value">{speed == null ? (gpsActive ? "…" : "—") : Math.round(speed)}<span className="hud-unit"> km/h</span></div>
         </button>
         <button
@@ -300,6 +365,35 @@ function Index() {
           {tab === "Teď" && (
             <div className="space-y-3">
               <div className="hud-label">Doporučení · {me ? "podle tvé polohy" : "bez GPS, jen poptávka"}</div>
+              <label className="flex items-center gap-2 rounded-md border border-border bg-secondary p-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={showDeliverySpots}
+                  onChange={(event) => setShowDeliverySpots(event.target.checked)}
+                  aria-label="Zobrazit body z CSV na mapě"
+                />
+                <span className="legend-dot bg-purple-400" />
+                <span className="flex-1">Bolt spoty z CSV</span>
+                <span className="font-mono text-xs text-muted-foreground">{deliverySpots.length}</span>
+              </label>
+              {deliverySpotsError && <p role="status" className="text-xs text-destructive">{deliverySpotsError}</p>}
+              <div>
+                <div className="hud-label mb-1">Ručně nastavit polohu · orientační středy zón</div>
+                <div className="flex flex-wrap gap-1">
+                  {ZONES.map((z) => (
+                    <button
+                      key={z.id}
+                      type="button"
+                      aria-pressed={presetId === z.id}
+                      onClick={() => selectZonePreset(z.id)}
+                      className={`hud-chip ${presetId === z.id ? "hud-chip-on" : ""}`}
+                    >
+                      {z.name}
+                    </button>
+                  ))}
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">Předvolby jsou přibližné středy stávajících hotspotů, nikoli živá GPS ani přesný průměr restaurací.</p>
+              </div>
               <div className="rounded-md border border-primary/40 bg-primary/10 p-3">
                 <div className="flex items-center gap-2 font-display text-xl">
                   <DemandDot score={best.demand} />
@@ -345,7 +439,7 @@ function Index() {
               <p className="text-xs text-muted-foreground">
                 {zone ? `Uložené zakázky se přiřadí k zóně ${zone.name} a zpřesní její doporučení.` : "Pro započítání výsledků do doporučení nejprve vyber zónu v Parkování."}
               </p>
-              <OfferTab S={S} setS={setS} onSave={(x) => setLog([...log, { ...x, ...(zoneId ? { zoneId } : {}) }])} />
+              <OfferTab S={S} setS={setS} offer={offer} setOffer={setOffer} onSave={(x) => setLog([...log, { ...x, ...(zoneId ? { zoneId } : {}) }])} />
             </div>
           )}
 
@@ -476,28 +570,65 @@ function Num({ l, v, set, step = 1 }: { l: string; v: number; set: (n: number) =
   return <label className="block"><span className="hud-label">{l}</span><input className="hud-input" type="number" inputMode="decimal" min={0} step={step} value={v || ""} onChange={(e) => { const n = parseFloat(e.target.value); set(Number.isFinite(n) ? Math.max(0, n) : 0); }} /></label>;
 }
 
-function OfferTab({ S, setS, onSave }: { S: Settings; setS: (s: Settings) => void; onSave: (x: LogItem) => void }) {
-  const [o, setO] = useState({ reward: 0, pk: 0, dk: 0, driveMin: 0, waitMin: 5 });
+function OfferTab({
+  S,
+  setS,
+  offer: o,
+  setOffer: setO,
+  onSave,
+}: {
+  S: Settings;
+  setS: (s: Settings) => void;
+  offer: OfferDraft;
+  setOffer: (offer: OfferDraft) => void;
+  onSave: (x: LogItem) => void;
+}) {
   const r = evaluate({ reward: o.reward, km: o.pk + o.dk, driveMin: o.driveMin, waitMin: o.waitMin }, S);
+  const minReward = minimumReward(o.pk + o.dk, o.driveMin + o.waitMin, S);
   const set = (k: keyof typeof o) => (n: number) => setO({ ...o, [k]: n });
   return (
     <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">
+        Zadej údaje z nabídky. Potřebná minimální odměna se dopočítá sama a poslední hodnoty zůstanou uložené.
+      </p>
       <div className="grid grid-cols-2 gap-2">
         <Num l="Odměna Kč" v={o.reward} set={set("reward")} /><Num l="Jízda celkem min" v={o.driveMin} set={set("driveMin")} />
         <Num l="K restauraci km" v={o.pk} set={set("pk")} step={0.1} /><Num l="K zákazníkovi km" v={o.dk} set={set("dk")} step={0.1} />
         <Num l="Čekání min" v={o.waitMin} set={set("waitMin")} />
       </div>
+      {minReward !== null && (
+        <div className="rounded-md border border-primary/40 bg-primary/10 p-3" aria-live="polite">
+          <div className="hud-label">Minimální odměna pro cíl {f(S.tgt)} Kč/h</div>
+          <div className="font-display text-xl">{f(minReward)} Kč</div>
+          <p className="text-xs text-muted-foreground">
+            Zahrnuje odhad nákladů {f((o.pk + o.dk) * costPerKm(S))} Kč a čas jízdy i čekání.
+          </p>
+        </div>
+      )}
       {r ? (
         <>
-          <div className="grid grid-cols-3 gap-2"><Stat l="Čistý" v={`${f(r.net)} Kč`} /><Stat l="Kč/h" v={f(r.perHour)} /><Stat l="Kč/km" v={f(r.perKm, 1)} /></div>
-          <div className="grid grid-cols-3 gap-2">
-            {(["eco", "max", "smart"] as const).map((k) => (
-              <div key={k} className={`rounded-md p-2 text-center font-mono text-xs font-bold uppercase ${r[k] ? "bg-primary text-primary-foreground" : "bg-destructive/20 text-destructive"}`}>{k}<br />{r[k] ? "vzít" : "ne"}</div>
-            ))}
+          <div className="grid grid-cols-2 gap-2">
+            <Stat l="Min. odměna" v={minReward === null ? "—" : `${f(minReward)} Kč`} />
+            <Stat l="Čistý zisk" v={`${f(r.net)} Kč`} />
+            <Stat l="Čistý výdělek" v={`${f(r.perHour)} Kč/h`} />
+            <Stat l="Čistě na km" v={`${f(r.perKm, 1)} Kč/km`} />
           </div>
+          <p
+            role="status"
+            className={`rounded-md p-2 text-center font-bold ${r.max ? "bg-primary text-primary-foreground" : r.smart ? "bg-warning/20 text-warning" : "bg-destructive/20 text-destructive"}`}
+          >
+            {r.max
+              ? "VZÍT · cíl Kč/h splněn"
+              : r.smart
+                ? "ZVÁŽIT · nabídka je pod cílem"
+                : "NEBRAT · nízký výdělek nebo Kč/km"}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Rozhodnutí porovnává čistý výdělek s cílem Kč/h; pod cílem nabídku zvaž jen při dostatečném čistém výnosu na kilometr.
+          </p>
           <button className="hud-btn w-full" onClick={() => onSave({ net: r.net, km: o.pk + o.dk, mov: o.driveMin, wait: o.waitMin, t: Date.now() })}>Uložit do směny</button>
         </>
-      ) : <p className="text-muted-foreground">Zadej odměnu, km a minuty.</p>}
+      ) : <p className="text-muted-foreground">Pro posouzení vyplň odměnu, celkovou vzdálenost a čas jízdy.</p>}
       <details className="rounded-md border border-border p-2">
         <summary className="hud-label cursor-pointer">Nastavení auta (odhad, přepiš)</summary>
         <div className="mt-2 grid grid-cols-2 gap-2">
