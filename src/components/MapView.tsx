@@ -60,6 +60,8 @@ export default function MapView({ zones, parking, deliverySpots, showDeliverySpo
       address: spot.address,
       category: spot.category,
       access: spot.access,
+      latitude: spot.c[1],
+      longitude: spot.c[0],
     }))));
     m.setLayoutProperty("delivery-spots", "visibility", showDeliverySpots ? "visible" : "none");
     m.setLayoutProperty("delivery-spots-label", "visibility", showDeliverySpots ? "visible" : "none");
@@ -116,6 +118,26 @@ export default function MapView({ zones, parking, deliverySpots, showDeliverySpo
           const line = document.createElement("p");
           line.textContent = String(properties[key] ?? "");
           content.append(line);
+        }
+        const latitude = Number(properties["latitude"]);
+        const longitude = Number(properties["longitude"]);
+        if (Number.isFinite(latitude) && Number.isFinite(longitude)) {
+          const navigation = document.createElement("div");
+          navigation.className = "delivery-spot-popup-navigation";
+          const destinations: [string, string][] = [
+            ["Google Maps", `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}&travelmode=driving`],
+            ["Mapy.cz", `https://mapy.cz/fnc/v1/route?end=${longitude},${latitude}&routeType=car_fast`],
+            ["Waze", `https://waze.com/ul?ll=${latitude},${longitude}&navigate=yes`],
+          ];
+          for (const [label, href] of destinations) {
+            const link = document.createElement("a");
+            link.href = href;
+            link.target = "_blank";
+            link.rel = "noopener noreferrer";
+            link.textContent = label;
+            navigation.append(link);
+          }
+          content.append(navigation);
         }
         new maplibregl.Popup({ closeButton: true, maxWidth: "280px", className: "delivery-spot-popup" })
           .setLngLat(event.lngLat)
