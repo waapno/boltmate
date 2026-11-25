@@ -8,7 +8,12 @@ describe("parseDeliverySpotsCsv", () => {
     const csv = readFileSync(resolve("public/bolt_delivery_spoty_ostrava.csv"), "utf8");
     const spots = parseDeliverySpotsCsv(csv);
 
-    expect(spots).toHaveLength(21);
+    expect(spots).toHaveLength(22);
+    expect(spots.at(-1)).toMatchObject({
+      name: "Tesco Třebovická",
+      address: "Sjízdná 5554/2, 722 00 Ostrava-Třebovice",
+      c: [18.2019325, 49.8282295],
+    });
     expect(spots.every((spot) =>
       Number.isFinite(spot.c[0]) &&
       Number.isFinite(spot.c[1]) &&

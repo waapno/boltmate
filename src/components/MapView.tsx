@@ -70,6 +70,7 @@ export default function MapView({ zones, parking, deliverySpots, showDeliverySpo
   useEffect(() => {
     if (!el.current) return;
     const m = new maplibregl.Map({ container: el.current, style: "https://tiles.openfreemap.org/styles/dark", center: OSTRAVA, zoom: 11.6, attributionControl: { compact: true } });
+    m.getCanvas().setAttribute("aria-label", "Interaktivní mapa Ostravy. Body označují zóny, parkoviště a spoty z CSV.");
     map.current = m;
     m.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "bottom-right");
     m.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-left");
@@ -81,8 +82,8 @@ export default function MapView({ zones, parking, deliverySpots, showDeliverySpo
         "circle-opacity": 0.22, "circle-blur": 0.6 } });
       m.addLayer({ id: "zone-core", type: "circle", source: "zones", paint: { "circle-radius": 6, "circle-color": "#0b0f14", "circle-stroke-width": 2.5,
         "circle-stroke-color": ["interpolate", ["linear"], ["get", "score"], 0.25, "#3a6df0", 0.6, "#f2b33d", 1, "#ff5a3c"] } });
-      m.addLayer({ id: "zone-label", type: "symbol", source: "zones", layout: { "text-field": ["get", "name"], "text-size": 11, "text-offset": [0, 1.4], "text-font": ["Noto Sans Bold"], "text-letter-spacing": 0.05, "text-transform": "uppercase" },
-        paint: { "text-color": "#e8ecf1", "text-halo-color": "#0b0f14", "text-halo-width": 1.5 } });
+      m.addLayer({ id: "zone-label", type: "symbol", source: "zones", layout: { "text-field": ["get", "name"], "text-size": 13, "text-offset": [0, 1.4], "text-font": ["Noto Sans Bold"], "text-letter-spacing": 0.05, "text-transform": "uppercase" },
+        paint: { "text-color": "#fff", "text-halo-color": "#0b0f14", "text-halo-width": 2.5 } });
       m.addLayer({ id: "route-line", type: "line", source: "route", paint: { "line-color": "#3ddc97", "line-width": 3, "line-dasharray": [2, 1.5] } });
       m.addLayer({ id: "park", type: "circle", source: "park", paint: {
         "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 4, 17, 11],
@@ -90,20 +91,20 @@ export default function MapView({ zones, parking, deliverySpots, showDeliverySpo
           ["step", ["get", "occupancy"], "#3ddc97", 50, "#f2b33d", 85, "#ff5a3c"],
           ["step", ["get", "score"], "#ff5a3c", 45, "#f2b33d", 65, "#3ddc97"]],
         "circle-stroke-color": "#0b0f14", "circle-stroke-width": 1.5 } });
-      m.addLayer({ id: "park-p", type: "symbol", source: "park", minzoom: 14, layout: { "text-field": ["case", ["get", "free"], "F", ["==", ["get", "source"], "osm"], "P", "M"], "text-size": 10, "text-font": ["Noto Sans Bold"], "text-allow-overlap": true }, paint: { "text-color": "#0b0f14" } });
+      m.addLayer({ id: "park-p", type: "symbol", source: "park", minzoom: 14, layout: { "text-field": ["case", ["get", "free"], "F", ["==", ["get", "source"], "osm"], "P", "M"], "text-size": 11, "text-font": ["Noto Sans Bold"], "text-allow-overlap": true }, paint: { "text-color": "#fff", "text-halo-color": "#0b0f14", "text-halo-width": 1 } });
       m.addLayer({ id: "delivery-spots", type: "circle", source: "delivery-spots", paint: {
-        "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 5, 16, 10],
-        "circle-color": "#c084fc",
+        "circle-radius": ["interpolate", ["linear"], ["zoom"], 10, 7, 16, 12],
+        "circle-color": "#a855f7",
         "circle-stroke-color": "#fff",
-        "circle-stroke-width": 1.5,
+        "circle-stroke-width": 2.5,
       } });
-      m.addLayer({ id: "delivery-spots-label", type: "symbol", source: "delivery-spots", minzoom: 13, layout: {
+      m.addLayer({ id: "delivery-spots-label", type: "symbol", source: "delivery-spots", minzoom: 14, layout: {
         "text-field": ["get", "name"],
-        "text-size": 10,
-        "text-offset": [0, 1.2],
+        "text-size": 12,
+        "text-offset": [0, 1.5],
         "text-font": ["Noto Sans Bold"],
         "text-allow-overlap": false,
-      }, paint: { "text-color": "#e9d5ff", "text-halo-color": "#0b0f14", "text-halo-width": 1.5 } });
+      }, paint: { "text-color": "#fff", "text-halo-color": "#0b0f14", "text-halo-width": 2.5 } });
       m.on("click", "delivery-spots", (event) => {
         const properties = event.features?.[0]?.properties;
         if (!properties) return;
