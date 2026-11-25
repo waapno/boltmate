@@ -450,6 +450,24 @@ function Index() {
                   <button key={z.id} onClick={() => loadParking(z.id)} className={`hud-chip ${zoneId === z.id ? "hud-chip-on" : ""}`}>{z.name}</button>
                 ))}
               </div>
+              {zone && (
+                <section className="rounded-md border border-primary/40 bg-primary/10 p-3" aria-label={`Offline souřadnice a navigace: ${zone.name}`}>
+                  <div className="hud-label">Navigace do oblasti · uložené souřadnice</div>
+                  <div className="mt-1 font-mono text-base font-semibold">
+                    {zone.c[1].toFixed(5)}, {zone.c[0].toFixed(5)}
+                  </div>
+                  <div className="mt-2 grid grid-cols-3 gap-2">
+                    {Object.entries(nav(zone.c)).map(([provider, url]) => (
+                      <a key={provider} href={url} target="_blank" rel="noopener" className="hud-btn text-center capitalize">
+                        {provider}
+                      </a>
+                    ))}
+                  </div>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Souřadnice oblastí jsou součástí aplikace a fungují offline. Navigace po silnicích a offline mapa vyžadují staženou mapu v navigační aplikaci.
+                  </p>
+                </section>
+              )}
               {loading && <div className="hud-label animate-pulse">Aktualizuji OSM a městská data parkovišť…</div>}
               {err && (
                 <div className="space-y-2 text-destructive">

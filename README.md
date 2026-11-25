@@ -37,3 +37,5 @@ The courier recommendation uses the configured hourly target and time-of-day dem
 The current five hotspot centers can also be selected as manual location presets; they are approximate zone coordinates, not live GPS or restaurant-coordinate averages. The offer calculator remembers its last inputs and automatically estimates the minimum gross reward needed to cover vehicle costs and meet the configured hourly target. Its take/consider/decline suggestion uses net hourly earnings and the minimum net-per-kilometer threshold.
 
 The “Bolt spoty z CSV” map layer reads `public/bolt_delivery_spoty_ostrava.csv`. Toggle it in the “Teď” panel; click a marker for its address, category, and access notes. Coordinates are geocoded or approximate address points, not a guarantee of an entrance or a currently valid parking permission; check the posted signs.
+
+Select an area in “Parkování” to see its bundled center coordinates and open the destination in Mapy.cz, Google Maps, or Waze. Those coordinates work offline; road routing requires the navigation app and its map data, downloaded in advance for offline use.

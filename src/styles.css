@@ -144,6 +144,37 @@
   .maplibregl-ctrl-group button .maplibregl-ctrl-icon { filter: invert(1); }
 }
 
+.maplibregl-popup.delivery-spot-popup .maplibregl-popup-content {
+  border: 1px solid oklch(1 0 0 / 24%);
+  border-radius: 0.75rem;
+  background-color: #111827 !important;
+  color: #f9fafb !important;
+  box-shadow: 0 12px 32px oklch(0 0 0 / 0.6);
+}
+
+.maplibregl-popup.delivery-spot-popup .maplibregl-popup-content strong {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: #fff !important;
+  font-size: 1rem;
+}
+
+.maplibregl-popup.delivery-spot-popup .maplibregl-popup-content p {
+  margin: 0.35rem 0 0;
+  color: #e5e7eb !important;
+  line-height: 1.4;
+}
+
+.maplibregl-popup.delivery-spot-popup .maplibregl-popup-close-button {
+  color: #fff;
+  font-size: 1.25rem;
+}
+
+.maplibregl-popup.delivery-spot-popup .maplibregl-popup-tip {
+  border-top-color: #111827;
+  border-bottom-color: #111827;
+}
+
 .mobile-hud-toggle { display: none; }
 
 @media (max-width: 767px), (max-height: 500px) {

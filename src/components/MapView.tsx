@@ -117,7 +117,7 @@ export default function MapView({ zones, parking, deliverySpots, showDeliverySpo
           line.textContent = String(properties[key] ?? "");
           content.append(line);
         }
-        new maplibregl.Popup({ closeButton: true, maxWidth: "280px" })
+        new maplibregl.Popup({ closeButton: true, maxWidth: "280px", className: "delivery-spot-popup" })
           .setLngLat(event.lngLat)
           .setDOMContent(content)
           .addTo(m);
